@@ -27,8 +27,8 @@ class Settings(BaseSettings):
 
     # --- Account ---
     # PRIVATE_KEY signs orders (your EOA). FUNDER_ADDRESS is your Polymarket
-    # deposit-wallet address (Profile -> Deposit, the "API use only" address);
-    # it holds the funds and is the order maker. The two are different addresses.
+    # deposit-wallet address (Settings -> Profile -> Address); it holds the funds
+    # and is the order maker. The two are different addresses.
     private_key: SecretStr | None = Field(default=None)
     funder_address: str | None = Field(default=None)
 

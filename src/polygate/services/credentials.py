@@ -27,7 +27,7 @@ def derive_clob_credentials(settings: Settings) -> dict[str, str]:
     if not settings.has_wallet:
         raise ConfigurationError(
             "PRIVATE_KEY and FUNDER_ADDRESS must be set in .env first "
-            "(run scripts/generate_wallet.py)."
+            "(reveal your key on polymarket.com under Settings -> Account -> Private Key)."
         )
     client = ClobClient(
         host=settings.clob_host,

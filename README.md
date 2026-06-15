@@ -28,11 +28,12 @@ flowchart LR
 
 Trading on Polymarket involves two addresses, and you provide both:
 
-- **Your wallet** (`PRIVATE_KEY`) - an ordinary Ethereum keypair, the same kind
-  MetaMask manages (often called an *EOA*, "externally owned account"). Its
-  private key **signs** your orders. If you already trade on Polymarket with
-  MetaMask (or another wallet), that wallet *is* this one - just export its
-  private key. You do not need a new wallet.
+- **Your wallet** (`PRIVATE_KEY`) - an ordinary Ethereum keypair (often called an
+  *EOA*, "externally owned account") whose private key **signs** your orders. If
+  you created your account on polymarket.com, this is the key it reveals under
+  **Settings → Account → Private Key** - that is your signer, no MetaMask needed.
+  If you instead connected your own wallet, export *its* private key. Either way
+  you do not need a new wallet.
 - **Your deposit wallet** (`FUNDER_ADDRESS`) - the account Polymarket provisions
   for you that actually **holds your USDC** and is the order maker. Polymarket
   validates your signature against it on-chain (EIP-1271). You never get a
@@ -57,20 +58,16 @@ This installs the service and the `polygate` server command.
 
 ### 2. Configure your account
 
-You need a wallet private key and your Polymarket deposit address.
+You need two things from your Polymarket account. Copy [.env.example](.env.example)
+to `.env` and fill in:
 
-- **Already on Polymarket?** Copy [.env.example](.env.example) to `.env` and fill
-  in `PRIVATE_KEY` (export it from your wallet) and `FUNDER_ADDRESS`.
-- **Starting fresh?** Run the generator - it creates a new wallet and a ready
-  `.env` (with a `PLATFORM_API_KEY` already set), then connect that wallet on
-  polymarket.com to provision your deposit wallet:
-
-  ```bash
-  python scripts/generate_wallet.py
-  ```
-
-Find your `FUNDER_ADDRESS` on polymarket.com under **Settings → Profile → Address** - it is
-the address shown there. It is different from your wallet address.
+- **`PRIVATE_KEY`** - your signer key. On polymarket.com, open
+  **Settings → Account → Private Key** and reveal it. (If you connected your own
+  wallet such as MetaMask instead of signing up directly, export the key from that
+  wallet instead.) **Keep it secret.**
+- **`FUNDER_ADDRESS`** - your deposit-wallet address, shown on polymarket.com
+  under **Settings → Profile → Address**. It is different from your signer's
+  address.
 
 Then set `PLATFORM_API_KEY` to any random value (it guards the account-only
 endpoints of this REST API).
