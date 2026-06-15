@@ -1,0 +1,109 @@
+"""Application configuration loaded from environment / `.env`.
+
+Secrets are stored as :class:`~pydantic.SecretStr` so they are never accidentally
+printed in logs or error messages. Use :meth:`Settings.public_summary` for any
+user-facing description of the active configuration.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .constants import CHAIN_ID, CLOB_HOST, DATA_HOST, GAMMA_HOST, SIGNATURE_TYPE
+
+
+class Settings(BaseSettings):
+    """Runtime settings for the trading platform."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # --- Account ---
+    # PRIVATE_KEY signs orders (your EOA). FUNDER_ADDRESS is your Polymarket
+    # deposit-wallet address (Profile -> Deposit, the "API use only" address);
+    # it holds the funds and is the order maker. The two are different addresses.
+    private_key: SecretStr | None = Field(default=None)
+    funder_address: str | None = Field(default=None)
+
+    # --- CLOB API credentials (derived from the private key by `derive-creds`) ---
+    clob_api_key: SecretStr | None = Field(default=None)
+    clob_secret: SecretStr | None = Field(default=None)
+    clob_passphrase: SecretStr | None = Field(default=None)
+
+    # --- Platform REST API protection ---
+    platform_api_key: SecretStr | None = Field(default=None)
+
+    # --- Developer dry-run switch (default off; orders are real) ---
+    # When true, orders are simulated and never signed or sent. Used by the test
+    # suite and local development; not part of normal operation.
+    dry_run: bool = Field(default=False)
+
+    # --- Polymarket hosts (overridable for testing) ---
+    gamma_host: str = Field(default=GAMMA_HOST)
+    clob_host: str = Field(default=CLOB_HOST)
+    data_host: str = Field(default=DATA_HOST)
+
+    # --- Server bind ---
+    host: str = Field(default="127.0.0.1")
+    port: int = Field(default=8000)
+    log_level: str = Field(default="INFO")
+
+    # --- Outbound HTTP behaviour ---
+    http_timeout_seconds: float = Field(default=15.0)
+    http_max_retries: int = Field(default=3)
+
+    @field_validator("funder_address")
+    @classmethod
+    def _checksum_optional_address(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        if not (value.startswith("0x") and len(value) == 42):
+            raise ValueError("FUNDER_ADDRESS must be a 0x-prefixed 42-char address")
+        return value
+
+    # --- Derived helpers ---
+    @property
+    def has_wallet(self) -> bool:
+        return self.private_key is not None and self.funder_address is not None
+
+    @property
+    def has_clob_creds(self) -> bool:
+        return all(
+            v is not None
+            for v in (self.clob_api_key, self.clob_secret, self.clob_passphrase)
+        )
+
+    @property
+    def can_trade_live(self) -> bool:
+        """True only when everything needed for real order placement is present."""
+        return not self.dry_run and self.has_wallet and self.has_clob_creds
+
+    def public_summary(self) -> dict:
+        """A secret-free description of the active configuration."""
+        return {
+            "mode": "dry-run" if self.dry_run else "LIVE",
+            "chain_id": CHAIN_ID,
+            "signature_type": SIGNATURE_TYPE,
+            "wallet_address": self.funder_address,
+            "wallet_configured": self.has_wallet,
+            "clob_creds_configured": self.has_clob_creds,
+            "platform_auth_enabled": self.platform_api_key is not None,
+            "hosts": {
+                "gamma": self.gamma_host,
+                "clob": self.clob_host,
+                "data": self.data_host,
+            },
+        }
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Return a cached :class:`Settings` instance."""
+    return Settings()
