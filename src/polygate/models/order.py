@@ -32,7 +32,7 @@ class PlaceOrderRequest(BaseModel):
     side: Side
     size: float = Field(gt=0, description="Number of outcome shares.")
     price: float | None = Field(
-        default=None, gt=0, lt=1, description="Limit price in [0,1]. Required for GTC/GTD."
+        default=None, gt=0, lt=1, description="Limit price in (0,1). Required for GTC/GTD."
     )
     order_type: OrderType = OrderType.GTC
     expiration: int | None = Field(

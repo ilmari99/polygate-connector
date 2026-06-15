@@ -1,8 +1,8 @@
 """Structured logging plus a dedicated audit log for state-changing actions.
 
-The audit logger records every trading / redemption action (including simulated
-dry-run actions) so there is always a local record of what the platform did or
-would have done. Secrets are never logged.
+The audit logger records every trading action (including simulated dry-run
+actions) so there is always a local record of what the platform did or would
+have done. Secrets are never logged.
 """
 
 from __future__ import annotations

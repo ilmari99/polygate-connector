@@ -1,4 +1,4 @@
-"""Data API client — positions, portfolio value, activity (public, by address).
+"""Data API client - positions, portfolio value, activity (public, by address).
 
 Docs: https://docs.polymarket.com (Data API). All endpoints take a ``user``
 address and require no authentication.

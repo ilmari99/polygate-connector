@@ -1,15 +1,15 @@
 # PolyGate
 
 **PolyGate** is a small, opinionated REST gateway that puts Polymarket's Gamma,
-CLOB, and Data APIs behind one authenticated HTTP service — so a trading agent,
+CLOB, and Data APIs behind one authenticated HTTP service - so a trading agent,
 whether algorithmic or LLM-driven, can start trading on
 [Polymarket](https://polymarket.com) without wrestling with SDKs, order signing,
 or on-chain plumbing. Your agent just speaks JSON over HTTP, in **any language**.
 
-- **Language-agnostic** — your agent talks to a local REST API, not a Python SDK.
-- **One account model** — the modern Polymarket **deposit wallet** (EIP-1271,
+- **Language-agnostic** - your agent talks to a local REST API, not a Python SDK.
+- **One account model** - the modern Polymarket **deposit wallet** (EIP-1271,
   signature type 3).
-- **Polymarket-native** — no on-chain setup, no token allowances, no separate RPC.
+- **Polymarket-native** - no on-chain setup, no token allowances, no separate RPC.
   Fund your account on polymarket.com and trade; all orders, fills, and history
   show up on your normal Polymarket account.
 
@@ -22,18 +22,18 @@ or on-chain plumbing. Your agent just speaks JSON over HTTP, in **any language**
 flowchart LR
     Agent["Your agent\n(any language)"] -- "X-API-Key + JSON" --> API["PolyGate\n(FastAPI)"]
     API --> Gamma["Gamma API\n(markets, events)"]
-    API --> CLOB["CLOB API\n(book, orders — signed,\ndeposit wallet EIP-1271)"]
+    API --> CLOB["CLOB API\n(book, orders - signed,\ndeposit wallet EIP-1271)"]
     API --> Data["Data API\n(positions, activity)"]
 ```
 
 Trading on Polymarket involves two addresses, and you provide both:
 
-- **Your wallet** (`PRIVATE_KEY`) — an ordinary Ethereum keypair, the same kind
+- **Your wallet** (`PRIVATE_KEY`) - an ordinary Ethereum keypair, the same kind
   MetaMask manages (often called an *EOA*, "externally owned account"). Its
   private key **signs** your orders. If you already trade on Polymarket with
-  MetaMask (or another wallet), that wallet *is* this one — just export its
+  MetaMask (or another wallet), that wallet *is* this one - just export its
   private key. You do not need a new wallet.
-- **Your deposit wallet** (`FUNDER_ADDRESS`) — the account Polymarket provisions
+- **Your deposit wallet** (`FUNDER_ADDRESS`) - the account Polymarket provisions
   for you that actually **holds your USDC** and is the order maker. Polymarket
   validates your signature against it on-chain (EIP-1271). You never get a
   separate key for it; your wallet above controls it.
@@ -62,7 +62,7 @@ You need a wallet private key and your Polymarket deposit address.
 
 - **Already on Polymarket?** Copy [.env.example](.env.example) to `.env` and fill
   in `PRIVATE_KEY` (export it from your wallet) and `FUNDER_ADDRESS`.
-- **Starting fresh?** Run the generator — it creates a new wallet and a ready
+- **Starting fresh?** Run the generator - it creates a new wallet and a ready
   `.env` (with a `PLATFORM_API_KEY` already set), then connect that wallet on
   polymarket.com to provision your deposit wallet:
 
@@ -70,7 +70,7 @@ You need a wallet private key and your Polymarket deposit address.
   python scripts/generate_wallet.py
   ```
 
-Find your `FUNDER_ADDRESS` on polymarket.com under **Settings → Profile → Address** — it is
+Find your `FUNDER_ADDRESS` on polymarket.com under **Settings → Profile → Address** - it is
 the address shown there. It is different from your wallet address.
 
 Then set `PLATFORM_API_KEY` to any random value (it guards this REST API), and
@@ -124,7 +124,7 @@ curl -s localhost:8000/markets -H "X-API-Key: $PLATFORM_API_KEY"
 
 ### Response shape
 
-**Data endpoints** wrap their payload so your agent can reason about staleness —
+**Data endpoints** wrap their payload so your agent can reason about staleness -
 it, not the platform, controls the polling frequency:
 
 ```json
@@ -146,13 +146,13 @@ appropriate HTTP status.
 
 ### A typical agent loop
 
-1. `GET /markets?active=true&closed=false` — find a market; read its
+1. `GET /markets?active=true&closed=false` - find a market; read its
    `clobTokenIds` (a JSON array of the Yes/No outcome token ids).
-2. `GET /midpoint/{token_id}` (or `/orderbook/{token_id}`, `/price/{token_id}`) —
+2. `GET /midpoint/{token_id}` (or `/orderbook/{token_id}`, `/price/{token_id}`) -
    read the current market for the outcome you care about.
 3. Decide your price and size.
-4. `POST /orders` — place the order.
-5. `GET /orders?market={condition_id}` and `GET /trades` — track open orders and
+4. `POST /orders` - place the order.
+5. `GET /orders?market={condition_id}` and `GET /trades` - track open orders and
    fills; `GET /portfolio/positions` and `/portfolio/value` for your book.
 
 [examples/sample_agent.py](examples/sample_agent.py) is a runnable, dependency-free
@@ -249,4 +249,4 @@ testing aid and off by default.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

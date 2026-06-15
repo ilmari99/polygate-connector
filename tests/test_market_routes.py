@@ -67,3 +67,16 @@ def test_place_order_requires_auth():
             "/orders", json={"token_id": "123", "side": "BUY", "size": 5, "price": 0.5}
         )
         assert resp.status_code == 401
+
+
+def test_validation_error_uses_error_envelope(auth_headers):
+    with TestClient(create_app()) as client:
+        resp = client.post(
+            "/orders",
+            headers=auth_headers,
+            json={"token_id": "123", "side": "BUY", "size": 5, "price": 1.5},
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["error"] == "validation_error"
+        assert "price" in body["detail"]

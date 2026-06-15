@@ -51,10 +51,3 @@ class ValidationError(PlatformError):
 class AuthError(PlatformError):
     status_code = 401
     code = "unauthorized"
-
-
-class TradingDisabledError(PlatformError):
-    """A live trading/on-chain action was requested but cannot be performed."""
-
-    status_code = 409
-    code = "trading_disabled"

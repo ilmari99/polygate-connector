@@ -1,4 +1,4 @@
-"""CLOB read-only endpoints — order book, prices, spread (public, no auth).
+"""CLOB read-only endpoints - order book, prices, spread (public, no auth).
 
 Docs: https://docs.polymarket.com/trading/orderbook
 """

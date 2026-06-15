@@ -5,8 +5,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from . import __version__
 from .api import routes_market, routes_portfolio, routes_system, routes_trading
 from .config import Settings, get_settings
 from .core.errors import PlatformError
@@ -53,7 +55,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="PolyGate",
-        version="0.1.0",
+        version=__version__,
         description=(
             "A language-agnostic REST gateway to the Polymarket APIs for "
             "algorithmic and LLM trading agents. "
@@ -67,6 +69,23 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": exc.code, "detail": exc.message},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error_handler(
+        _: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        parts = []
+        for err in exc.errors():
+            loc = ".".join(str(p) for p in err.get("loc", ()) if p != "body")
+            msg = err.get("msg", "invalid value")
+            parts.append(f"{loc}: {msg}" if loc else msg)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "validation_error",
+                "detail": "; ".join(parts) or "Invalid request.",
+            },
         )
 
     @app.exception_handler(Exception)

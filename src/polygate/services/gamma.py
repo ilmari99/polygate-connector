@@ -1,4 +1,4 @@
-"""Gamma API client — market & event discovery (public, no auth).
+"""Gamma API client - market & event discovery (public, no auth).
 
 Docs: https://docs.polymarket.com/market-data/fetching-markets
 """

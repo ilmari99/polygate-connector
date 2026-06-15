@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends
 
 from ..config import get_settings
 from ..core.auth import require_api_key
-from .deps import get_service
 
 router = APIRouter(tags=["system"])
 
@@ -23,6 +22,6 @@ async def health() -> dict:
 
 
 @router.get("/config", dependencies=[Depends(require_api_key)])
-async def config(service=Depends(get_service)) -> dict:
+async def config() -> dict:
     """Return the active, secret-free configuration summary."""
     return get_settings().public_summary()
