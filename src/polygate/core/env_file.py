@@ -11,7 +11,7 @@ def find_env_path() -> Path:
     cwd_env = Path.cwd() / ".env"
     if cwd_env.exists():
         return cwd_env
-    # repo root = three parents up from this file: cli/ -> polygate/ -> src/ -> root
+    # repo root = three parents up from this file: core/ -> polygate/ -> src/ -> root
     return Path(__file__).resolve().parents[3] / ".env"
 
 

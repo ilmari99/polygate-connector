@@ -30,3 +30,8 @@ class DataApiService:
     async def activity(self, user: str, **params: Any) -> Any:
         q = {"user": user, **{k: v for k, v in params.items() if v is not None}}
         return await self._http.get_json(f"{self._host}/activity", params=q, source="data")
+
+    async def holders(self, market: str, **params: Any) -> Any:
+        """Top holders for a market (by conditionId), grouped per outcome token."""
+        q = {"market": market, **{k: v for k, v in params.items() if v is not None}}
+        return await self._http.get_json(f"{self._host}/holders", params=q, source="data")

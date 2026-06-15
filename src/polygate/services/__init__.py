@@ -1,1 +1,1 @@
-"""Service layer: upstream clients and the dry-run-aware facade."""
+"""Service layer: upstream clients, credential derivation, and the dry-run-aware facade."""

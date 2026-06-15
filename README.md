@@ -53,8 +53,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install .
 ```
 
-This installs the service and two console commands: `polygate` (the
-server) and `derive-creds` (credential setup).
+This installs the service and the `polygate` server command.
 
 ### 2. Configure your account
 
@@ -73,12 +72,12 @@ You need a wallet private key and your Polymarket deposit address.
 Find your `FUNDER_ADDRESS` on polymarket.com under **Settings → Profile → Address** - it is
 the address shown there. It is different from your wallet address.
 
-Then set `PLATFORM_API_KEY` to any random value (it guards this REST API), and
-derive your CLOB credentials:
+Then set `PLATFORM_API_KEY` to any random value (it guards the account-only
+endpoints of this REST API).
 
-```bash
-derive-creds          # reads PRIVATE_KEY, writes CLOB_* into .env
-```
+That is all the setup you need: the **CLOB credentials are derived automatically
+from your wallet key the first time the server starts**, and saved back to
+`.env`.
 
 ### 3. Run
 
@@ -99,14 +98,15 @@ All configuration is environment-driven; see [.env.example](.env.example).
 | `PRIVATE_KEY`      |   yes    | Private key of the wallet that signs your orders. **Keep secret.**       |
 | `FUNDER_ADDRESS`   |   yes    | Your Polymarket deposit address.                                         |
 | `PLATFORM_API_KEY` |   yes    | Shared secret for this REST API. Sent as the `X-API-Key` header.         |
-| `CLOB_API_KEY`     |   yes    | CLOB credential, filled in by `derive-creds`.                            |
-| `CLOB_SECRET`      |   yes    | CLOB credential, filled in by `derive-creds`.                            |
-| `CLOB_PASSPHRASE`  |   yes    | CLOB credential, filled in by `derive-creds`.                            |
+| `CLOB_API_KEY`     |   auto   | Auto-derived from your wallet key at startup.                            |
+| `CLOB_SECRET`      |   auto   | Auto-derived from your wallet key at startup.                            |
+| `CLOB_PASSPHRASE`  |   auto   | Auto-derived from your wallet key at startup.                            |
 | `HOST` / `PORT`    |    no    | Server bind address (default `127.0.0.1:8000`).                          |
 | `LOG_LEVEL`        |    no    | Logging level (default `INFO`).                                          |
 
-The server refuses to start without `PLATFORM_API_KEY`, and refuses to run
-without a wallet and CLOB credentials.
+The server refuses to start without `PLATFORM_API_KEY` (it protects the account
+endpoints) or without a wallet; the CLOB credentials it needs are derived
+automatically on first start.
 
 ## Using the API
 
@@ -115,11 +115,18 @@ market data, decide, then place orders.
 
 ### Authentication
 
-Every request must carry your platform secret in the `X-API-Key` header (the only
-exception is `GET /health`):
+Public **market-data** and **research** endpoints (markets, events, order book,
+prices, search, comments, holders) need no credentials. Endpoints that touch your
+**account** - the whole `/portfolio` group, the `/orders` and `/trades` listings,
+the trading actions, and `/config` - require your platform secret in the
+`X-API-Key` header. `GET /health` is always public.
 
 ```bash
-curl -s localhost:8000/markets -H "X-API-Key: $PLATFORM_API_KEY"
+# public - no key needed
+curl -s localhost:8000/markets
+
+# account - key required
+curl -s localhost:8000/portfolio/positions -H "X-API-Key: $PLATFORM_API_KEY"
 ```
 
 ### Response shape
@@ -138,7 +145,7 @@ it, not the platform, controls the polling frequency:
 **Action endpoints** (`POST /orders`, cancels) return the result directly, e.g.:
 
 ```json
-{ "success": true, "order_id": "0xabc...", "status": "matched" }
+{ "simulated": false, "success": true, "order_id": "0xabc...", "status": "matched" }
 ```
 
 Errors always come back as `{ "error": "<code>", "detail": "<message>" }` with an
@@ -189,7 +196,8 @@ marketable orders and still need an explicit limit `price`.
 
 ## API reference
 
-All endpoints require `X-API-Key` except `GET /health`.
+Market-data and research endpoints are public. Portfolio, trading, and `/config`
+require `X-API-Key`; `GET /health` is always public.
 
 ### System
 | Method | Path      | Description                          |
@@ -205,11 +213,18 @@ All endpoints require `X-API-Key` except `GET /health`.
 | GET    | `/events`                     | List events.                      |
 | GET    | `/tags`                       | List tags.                        |
 | GET    | `/orderbook/{token_id}`       | Full CLOB order book.             |
-| GET    | `/price/{token_id}`           | Best bid/ask (`?side=BUY\|SELL`). |
+| GET    | `/price/{token_id}`           | Best book price per side: `?side=BUY` = best **bid**, `?side=SELL` = best **ask**. |
 | GET    | `/midpoint/{token_id}`        | Order-book midpoint.              |
 | GET    | `/spread/{token_id}`          | Bid/ask spread.                   |
 | GET    | `/last-trade-price/{token_id}`| Last traded price.                |
 | GET    | `/prices-history/{token_id}`  | Historical prices.                |
+
+### Research
+| Method | Path                        | Description                                      |
+| ------ | --------------------------- | ------------------------------------------------ |
+| GET    | `/search`                   | Full-text search over events/markets (`?q=`).    |
+| GET    | `/comments`                 | Event comments (`?event_id=` numeric event id).  |
+| GET    | `/holders/{condition_id}`   | Top holders per outcome token.                   |
 
 ### Portfolio
 | Method | Path                   | Description                                 |

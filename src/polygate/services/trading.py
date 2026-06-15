@@ -77,7 +77,8 @@ class TradingService:
             )
         if not settings.has_clob_creds:
             raise ConfigurationError(
-                "CLOB credentials missing. Run `derive-creds` to populate them in .env."
+                "CLOB credentials missing; they are normally derived automatically "
+                "when the server starts."
             )
         creds = ApiCreds(
             api_key=settings.clob_api_key.get_secret_value(),

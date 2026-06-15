@@ -30,7 +30,6 @@ dev = [
 
 [project.scripts]
 polygate = "polygate.main:run"
-derive-creds = "polygate.cli.derive_creds:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

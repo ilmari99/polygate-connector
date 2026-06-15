@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from ..core.auth import require_api_key
 from ..models.common import ResponseEnvelope
 from .deps import get_service
 
-router = APIRouter(prefix="/markets", tags=["market-data"], dependencies=[Depends(require_api_key)])
-book_router = APIRouter(tags=["market-data"], dependencies=[Depends(require_api_key)])
+# Market-data and research endpoints read only public Polymarket data, so they
+# carry no platform-key dependency. Account endpoints (portfolio, trading) do.
+router = APIRouter(prefix="/markets", tags=["market-data"])
+book_router = APIRouter(tags=["market-data"])
 
 
 @router.get("")
@@ -46,7 +47,7 @@ async def get_market(condition_id: str, service=Depends(get_service)) -> Respons
 
 
 # --- Events / tags ---
-events_router = APIRouter(tags=["market-data"], dependencies=[Depends(require_api_key)])
+events_router = APIRouter(tags=["market-data"])
 
 
 @events_router.get("/events")
@@ -119,3 +120,49 @@ async def prices_history(
         token_id, interval=interval, start_ts=start_ts, end_ts=end_ts, fidelity=fidelity
     )
     return ResponseEnvelope.of(data, source="clob")
+
+
+# --- Research: search, comments, holders (so agents never call raw upstreams) ---
+research_router = APIRouter(tags=["research"])
+
+
+@research_router.get("/search")
+async def search(
+    q: str = Query(..., min_length=1, description="Free-text query over events and markets."),
+    limit_per_type: int | None = Query(default=None, ge=1, le=100),
+    page: int | None = Query(default=None, ge=1),
+    events_status: str | None = Query(default=None, description="e.g. 'active', 'resolved'."),
+    service=Depends(get_service),
+) -> ResponseEnvelope:
+    """Full-text search across Polymarket events and markets (Gamma)."""
+    data = await service.gamma.search(
+        q, limit_per_type=limit_per_type, page=page, events_status=events_status
+    )
+    return ResponseEnvelope.of(data, source="gamma")
+
+
+@research_router.get("/comments")
+async def comments(
+    event_id: int = Query(..., description="Numeric event id (markets group under an event)."),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    order: str | None = None,
+    ascending: bool | None = None,
+    service=Depends(get_service),
+) -> ResponseEnvelope:
+    """Public comments on an event (Gamma)."""
+    data = await service.gamma.list_comments(
+        parent_entity_id=event_id, limit=limit, offset=offset, order=order, ascending=ascending
+    )
+    return ResponseEnvelope.of(data, source="gamma")
+
+
+@research_router.get("/holders/{condition_id}")
+async def holders(
+    condition_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    service=Depends(get_service),
+) -> ResponseEnvelope:
+    """Top holders for a market, grouped by outcome token (Data API)."""
+    data = await service.data.holders(condition_id, limit=limit)
+    return ResponseEnvelope.of(data, source="data")

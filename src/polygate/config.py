@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     private_key: SecretStr | None = Field(default=None)
     funder_address: str | None = Field(default=None)
 
-    # --- CLOB API credentials (derived from the private key by `derive-creds`) ---
+    # --- CLOB API credentials (derived from the private key automatically at startup) ---
     clob_api_key: SecretStr | None = Field(default=None)
     clob_secret: SecretStr | None = Field(default=None)
     clob_passphrase: SecretStr | None = Field(default=None)

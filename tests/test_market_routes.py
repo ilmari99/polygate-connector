@@ -80,3 +80,64 @@ def test_validation_error_uses_error_envelope(auth_headers):
         body = resp.json()
         assert body["error"] == "validation_error"
         assert "price" in body["detail"]
+
+
+@respx.mock
+def test_search_routes_to_gamma(auth_headers):
+    route = respx.get("https://gamma-api.polymarket.com/public-search").mock(
+        return_value=httpx.Response(
+            200, json={"events": [{"id": "1"}], "pagination": {"hasMore": False}}
+        )
+    )
+    with TestClient(create_app()) as client:
+        resp = client.get("/search", params={"q": "bitcoin"}, headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert route.called
+        assert route.calls.last.request.url.params["q"] == "bitcoin"
+        assert body["source"] == "gamma"
+        assert body["data"]["events"][0]["id"] == "1"
+
+
+@respx.mock
+def test_comments_routes_to_gamma(auth_headers):
+    route = respx.get("https://gamma-api.polymarket.com/comments").mock(
+        return_value=httpx.Response(200, json=[{"id": "c1", "body": "hi"}])
+    )
+    with TestClient(create_app()) as client:
+        resp = client.get("/comments", params={"event_id": 123}, headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert route.called
+        params = route.calls.last.request.url.params
+        assert params["parent_entity_type"] == "Event"
+        assert params["parent_entity_id"] == "123"
+        assert body["source"] == "gamma"
+        assert body["data"][0]["id"] == "c1"
+
+
+@respx.mock
+def test_holders_routes_to_data_api(auth_headers):
+    route = respx.get("https://data-api.polymarket.com/holders").mock(
+        return_value=httpx.Response(200, json=[{"token": "t1", "holders": []}])
+    )
+    with TestClient(create_app()) as client:
+        resp = client.get("/holders/0xabc", params={"limit": 5}, headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert route.called
+        assert route.calls.last.request.url.params["market"] == "0xabc"
+        assert body["source"] == "data"
+        assert body["data"][0]["token"] == "t1"
+
+
+@respx.mock
+def test_comments_is_public():
+    respx.get("https://gamma-api.polymarket.com/comments").mock(
+        return_value=httpx.Response(200, json=[{"id": "c1", "body": "hi"}])
+    )
+    with TestClient(create_app()) as client:
+        # Research endpoints require no X-API-Key.
+        resp = client.get("/comments", params={"event_id": 1})
+        assert resp.status_code == 200
+        assert resp.json()["source"] == "gamma"

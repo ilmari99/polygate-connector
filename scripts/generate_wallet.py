@@ -58,7 +58,7 @@ def main() -> None:
         "# --- Platform REST API ---\n"
         "# Send this as the 'X-API-Key' header on every request to the platform.\n"
         f"PLATFORM_API_KEY={platform_api_key}\n\n"
-        "# --- Filled in by `derive-creds` ---\n"
+        "# --- Derived automatically by the server on first start ---\n"
         "# CLOB_API_KEY / CLOB_SECRET / CLOB_PASSPHRASE\n"
     )
 
@@ -77,7 +77,7 @@ def main() -> None:
     print("  2. Connect this wallet on polymarket.com to create your deposit wallet.")
     print("  3. Set FUNDER_ADDRESS in .env to that deposit-wallet address")
     print("     (Profile -> Deposit, shown as 'API use only').")
-    print("  4. Run:  derive-creds")
+    print("  4. Start the server:  polygate")
 
 
 if __name__ == "__main__":

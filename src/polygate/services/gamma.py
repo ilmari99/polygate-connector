@@ -43,6 +43,32 @@ class GammaService:
     async def list_tags(self) -> Any:
         return await self._http.get_json(f"{self._host}/tags", source="gamma")
 
+    async def search(self, query: str, **params: Any) -> Any:
+        """Full-text search across events and markets (public-search).
+
+        Returns ``{events: [...], pagination: {...}}``. Useful params: limit_per_type,
+        events_status (e.g. 'active'), page.
+        """
+        return await self._http.get_json(
+            f"{self._host}/public-search", params=_clean({"q": query, **params}), source="gamma"
+        )
+
+    async def list_comments(
+        self, *, parent_entity_id: int, parent_entity_type: str = "Event", **params: Any
+    ) -> Any:
+        """Public comments on an event (or series). Returns a list of comments."""
+        return await self._http.get_json(
+            f"{self._host}/comments",
+            params=_clean(
+                {
+                    "parent_entity_type": parent_entity_type,
+                    "parent_entity_id": parent_entity_id,
+                    **params,
+                }
+            ),
+            source="gamma",
+        )
+
 
 def _clean(params: dict[str, Any]) -> dict[str, Any]:
     """Drop None values so they are not serialised into the query string."""
