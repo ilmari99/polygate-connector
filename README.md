@@ -56,10 +56,15 @@ pip install .
 
 This installs the service and the `polygate` server command.
 
+> **Prefer [uv](https://docs.astral.sh/uv/)?** You can skip the manual
+> virtual-environment and Python management entirely. From the cloned repo,
+> `uv run polygate` provisions an isolated environment and starts the server in
+> one step. To run it without cloning, use
+> `uvx --from git+https://github.com/ilmari99/polygate polygate`.
+
 ### 2. Configure your account
 
-You need two things from your Polymarket account. Copy [.env.example](.env.example)
-to `.env` and fill in:
+You need two things from your Polymarket account:
 
 - **`PRIVATE_KEY`** - your signer key. On polymarket.com, open
   **Settings → Account → Private Key** and reveal it. (If you connected your own
@@ -68,7 +73,18 @@ to `.env` and fill in:
 - **`FUNDER_ADDRESS`** - the address that holds your funds and is the order maker, shown on polymarket.com under
   **Settings → Profile → Address**.
 
-That is all you provide. On first start PolyGate **generates a `PLATFORM_API_KEY`**, **derives the CLOB
+There are two ways to provide them:
+
+- **In your browser (no file editing).** Start the server (step 3) and open
+  **http://127.0.0.1:8000/setup**. PolyGate runs unconfigured until you do this:
+  paste the two values into the local page and submit. The page is served only
+  to the local machine and only while no wallet is configured; your keys are
+  written to `.env` on this machine and never leave it.
+- **By editing `.env`.** Copy [.env.example](.env.example) to `.env` and fill in
+  `PRIVATE_KEY` and `FUNDER_ADDRESS` before starting.
+
+Either way, that is all you provide. On first start (or right after you submit
+the setup page) PolyGate **generates a `PLATFORM_API_KEY`**, **derives the CLOB
 credentials from your wallet key**, and **detects your order `SIGNATURE_TYPE`**
 from which maker holds your funds, saving them all back to `.env`. Read the
 generated `PLATFORM_API_KEY` from `.env` to call the protected endpoints.
@@ -76,12 +92,13 @@ generated `PLATFORM_API_KEY` from `.env` to call the protected endpoints.
 ### 3. Run
 
 ```bash
-polygate
+polygate        # or: uv run polygate
 ```
 
 The API listens on `http://127.0.0.1:8000`, with interactive docs at
-`http://127.0.0.1:8000/docs`. Orders are **real** once the server is running and
-your account is funded.
+`http://127.0.0.1:8000/docs`. If you have not added your keys yet, open
+`http://127.0.0.1:8000/setup` to connect your account. Orders are **real** once
+a wallet is configured and your account is funded.
 
 ## Configuration
 
@@ -99,10 +116,11 @@ All configuration is environment-driven; see [.env.example](.env.example).
 | `HOST` / `PORT`    |    no    | Server bind address (default `127.0.0.1:8000`).                          |
 | `LOG_LEVEL`        |    no    | Logging level (default `INFO`).                                          |
 
-The server needs a wallet (`PRIVATE_KEY` + `FUNDER_ADDRESS`) to start; the
-`PLATFORM_API_KEY` that protects the account endpoints, the CLOB credentials, and
-your order signature type are all generated or detected automatically on first
-start and saved to `.env`.
+The server starts without a wallet and serves the local `/setup` page until you
+add one (`PRIVATE_KEY` + `FUNDER_ADDRESS`); account and trading endpoints become
+active as soon as it is configured. The `PLATFORM_API_KEY` that protects the
+account endpoints, the CLOB credentials, and your order signature type are all
+generated or detected automatically and saved to `.env`.
 
 ## Using the API
 
