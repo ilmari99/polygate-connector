@@ -13,6 +13,7 @@ written to ``.env``; they never leave the machine.
 
 from __future__ import annotations
 
+import html
 import ipaddress
 import re
 
@@ -105,22 +106,29 @@ def _client_is_local(request: Request) -> bool:
 
 @router.get("/setup", response_class=HTMLResponse, include_in_schema=False)
 async def setup_page(request: Request) -> HTMLResponse:
-    """Serve the one-time setup form (loopback only, while unconfigured)."""
+    """Serve the setup form (loopback only). Doubles as the reconfigure form."""
     if not _client_is_local(request):
         return HTMLResponse(_LOCAL_ONLY_HTML, status_code=403)
-    if get_settings().has_wallet:
-        return HTMLResponse(_ALREADY_CONFIGURED_HTML, status_code=200)
-    return HTMLResponse(_SETUP_HTML, status_code=200)
+    settings = get_settings()
+    banner = ""
+    if settings.has_wallet:
+        banner = (
+            '<div class="note"><strong>A wallet is already connected</strong> ('
+            + html.escape(settings.funder_address or "")
+            + "). Submitting below replaces it and re-derives credentials.</div>"
+        )
+    return HTMLResponse(_SETUP_HTML.replace("<!--BANNER-->", banner), status_code=200)
 
 
 @router.post("/setup", include_in_schema=False)
 async def setup_submit(request: Request, body: SetupRequest) -> JSONResponse:
     """Persist the supplied wallet, finish onboarding, and activate trading.
 
-    Only callable from loopback while the server is still unconfigured. Writes the
-    keys to ``.env``, derives the CLOB credentials and signature type (skipped in
-    dry-run), then rebuilds the service so account and trading endpoints come live
-    without a restart.
+    Callable from loopback whether or not a wallet is already configured, so it
+    serves both first-run setup and later reconfiguration. Writes the keys to
+    ``.env`` (clearing any wallet-derived credentials), derives the CLOB
+    credentials and signature type (skipped in dry-run), then rebuilds the
+    service so account and trading endpoints come live without a restart.
     """
     if not _client_is_local(request):
         return JSONResponse(
@@ -131,14 +139,7 @@ async def setup_submit(request: Request, body: SetupRequest) -> JSONResponse:
             },
         )
     settings = get_settings()
-    if settings.has_wallet:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "error": "already_configured",
-                "detail": "A wallet is already configured. Edit .env to change it.",
-            },
-        )
+    reconfigured = settings.has_wallet
 
     save_wallet(settings, body.private_key, body.funder_address)
     try:
@@ -163,6 +164,7 @@ async def setup_submit(request: Request, body: SetupRequest) -> JSONResponse:
         content={
             "status": "ok",
             "configured": True,
+            "reconfigured": reconfigured,
             "mode": "dry-run" if settings.dry_run else "live",
             "wallet_address": settings.funder_address,
         },
@@ -201,6 +203,7 @@ _SETUP_HTML = """<!doctype html>
   <p class="sub">Connect your Polymarket account. These keys stay on this machine
      &mdash; they are written to a local <code>.env</code> file and never sent anywhere
      but to Polymarket when you trade.</p>
+  <!--BANNER-->
 
   <div class="note">
     <strong>Where to find these</strong> (see the
@@ -274,15 +277,6 @@ _SETUP_HTML = """<!doctype html>
   </script>
 </body>
 </html>"""
-
-
-_ALREADY_CONFIGURED_HTML = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8" /><title>PolyGate</title>
-<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:2.5rem auto;
-padding:0 1.25rem;line-height:1.5}</style></head>
-<body><h1>PolyGate is configured</h1>
-<p>A wallet is already connected. To change it, edit the <code>.env</code> file
-on this machine and restart the server.</p></body></html>"""
 
 
 _LOCAL_ONLY_HTML = """<!doctype html>

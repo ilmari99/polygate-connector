@@ -122,7 +122,21 @@ app = create_app()
 
 
 def run() -> None:
-    """Console-script entrypoint: start the uvicorn server."""
+    """Console-script entrypoint.
+
+    With no arguments it starts the gateway server. ``polygate setup`` runs the
+    interactive, terminal-based wallet setup - the friction-free path on a remote
+    server where the loopback-only web ``/setup`` page can't be reached from a
+    browser.
+    """
+    import sys
+
+    args = sys.argv[1:]
+    if args:
+        from .cli import dispatch
+
+        raise SystemExit(dispatch(args))
+
     import uvicorn
 
     settings = get_settings()

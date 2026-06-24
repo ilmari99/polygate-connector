@@ -43,24 +43,32 @@ def find_env_path() -> Path:
     return DEFAULT_DATA_DIR / ".env"
 
 
-def upsert_env(path: Path, values: dict[str, str]) -> None:
+def upsert_env(
+    path: Path,
+    values: dict[str, str],
+    remove: tuple[str, ...] = (),
+) -> None:
     """Insert or update ``KEY=value`` pairs in ``path`` without touching others.
 
-    Preserves comments and ordering; appends new keys at the end. Creates the
-    parent directory if needed and re-applies ``chmod 600`` afterwards so secrets
-    stay private.
+    Preserves comments and ordering; appends new keys at the end. Keys listed in
+    ``remove`` are deleted (used to drop wallet-derived credentials when the
+    wallet changes). Creates the parent directory if needed and re-applies
+    ``chmod 600`` afterwards so secrets stay private.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     if path.exists():
         lines = path.read_text().splitlines()
 
+    drop = set(remove)
     remaining = dict(values)
     out: list[str] = []
     for line in lines:
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
             key = stripped.split("=", 1)[0].strip()
+            if key in drop:
+                continue
             if key in remaining:
                 out.append(f"{key}={remaining.pop(key)}")
                 continue

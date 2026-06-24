@@ -94,11 +94,21 @@ def save_wallet(settings: Settings, private_key: str, funder_address: str) -> Pa
 
     Writes ``PRIVATE_KEY`` and ``FUNDER_ADDRESS`` (chmod 600 via
     :func:`upsert_env`) and mirrors them onto the in-memory settings so the
-    running process can finish onboarding without a restart. Returns the ``.env``
-    path that was written.
+    running process can finish onboarding without a restart. Any previously
+    derived, wallet-specific material (CLOB credentials and signature type) is
+    cleared from both ``.env`` and settings so reconfiguring with a new wallet
+    re-derives them cleanly. Returns the ``.env`` path that was written.
     """
     path = find_env_path()
-    upsert_env(path, {"PRIVATE_KEY": private_key, "FUNDER_ADDRESS": funder_address})
+    upsert_env(
+        path,
+        {"PRIVATE_KEY": private_key, "FUNDER_ADDRESS": funder_address},
+        remove=("CLOB_API_KEY", "CLOB_SECRET", "CLOB_PASSPHRASE", "SIGNATURE_TYPE"),
+    )
     settings.private_key = SecretStr(private_key)
     settings.funder_address = funder_address
+    settings.clob_api_key = None
+    settings.clob_secret = None
+    settings.clob_passphrase = None
+    settings.signature_type = None
     return path

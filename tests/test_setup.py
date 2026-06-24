@@ -115,19 +115,31 @@ def test_setup_submit_configures_wallet(local_client: TestClient, _redirect_env:
         assert f"FUNDER_ADDRESS={_FAKE_FUNDER}" in written
 
 
-def test_setup_submit_conflicts_when_already_configured(local_client: TestClient):
+def test_setup_submit_reconfigures_when_already_configured(
+    local_client: TestClient, _redirect_env: Path
+):
+    other_funder = "0x" + "cd" * 20
     with local_client as client:
         first = client.post(
             "/setup",
             json={"private_key": _FAKE_PK, "funder_address": _FAKE_FUNDER},
         )
         assert first.status_code == 200
+        assert first.json()["reconfigured"] is False
+
         second = client.post(
             "/setup",
-            json={"private_key": _FAKE_PK, "funder_address": _FAKE_FUNDER},
+            json={"private_key": _FAKE_PK, "funder_address": other_funder},
         )
-        assert second.status_code == 409
-        assert second.json()["error"] == "already_configured"
+        assert second.status_code == 200
+        body = second.json()
+        assert body["reconfigured"] is True
+        assert body["wallet_address"] == other_funder
+
+        # The new wallet replaced the old one in the env file.
+        written = _redirect_env.read_text()
+        assert f"FUNDER_ADDRESS={other_funder}" in written
+        assert _FAKE_FUNDER not in written
 
 
 def test_setup_page_shows_configured_after_setup(local_client: TestClient):
