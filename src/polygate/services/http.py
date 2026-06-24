@@ -12,6 +12,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from .. import __version__
 from ..core.errors import UpstreamError
 from ..core.logging import log
 
@@ -25,7 +26,7 @@ class HttpClient:
     def __init__(self, *, timeout: float = 15.0, max_retries: int = 3):
         self._client = httpx.AsyncClient(
             timeout=timeout,
-            headers={"User-Agent": "polygate/0.1"},
+            headers={"User-Agent": f"polygate/{__version__}"},
             follow_redirects=True,
         )
         self._max_retries = max(1, max_retries)
