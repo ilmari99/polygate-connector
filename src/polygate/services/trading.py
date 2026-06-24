@@ -24,7 +24,7 @@ from py_clob_client_v2.clob_types import (
 from py_clob_client_v2.client import ClobClient
 
 from ..config import Settings
-from ..constants import CHAIN_ID, SIGNATURE_TYPE
+from ..constants import CHAIN_ID
 from ..core.errors import ConfigurationError, UpstreamError
 from ..models.order import OrderType, PlaceOrderRequest, Side
 
@@ -65,8 +65,9 @@ def _upstream_message(prefix: str, exc: Exception) -> str:
 class TradingService:
     """Wraps the authenticated CLOB client. Construct via :meth:`from_settings`."""
 
-    def __init__(self, client: ClobClient):
+    def __init__(self, client: ClobClient, signature_type: int):
         self._client = client
+        self._sig_type = signature_type
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "TradingService":
@@ -80,6 +81,7 @@ class TradingService:
                 "CLOB credentials missing; they are normally derived automatically "
                 "when the server starts."
             )
+        sig_type = settings.resolved_signature_type
         creds = ApiCreds(
             api_key=settings.clob_api_key.get_secret_value(),
             api_secret=settings.clob_secret.get_secret_value(),
@@ -90,10 +92,10 @@ class TradingService:
             chain_id=CHAIN_ID,
             key=settings.private_key.get_secret_value(),
             creds=creds,
-            signature_type=SIGNATURE_TYPE,
+            signature_type=sig_type,
             funder=settings.funder_address,
         )
-        return cls(client)
+        return cls(client, sig_type)
 
     # --- Authenticated reads ---
     async def balance_allowance(self, *, conditional_token_id: str | None = None) -> Any:
@@ -101,13 +103,13 @@ class TradingService:
             params = BalanceAllowanceParams(
                 asset_type=AssetType.CONDITIONAL,
                 token_id=conditional_token_id,
-                signature_type=SIGNATURE_TYPE,
+                signature_type=self._sig_type,
             )
         else:
             params = BalanceAllowanceParams(
                 asset_type=AssetType.COLLATERAL,
                 token_id=None,
-                signature_type=SIGNATURE_TYPE,
+                signature_type=self._sig_type,
             )
         return _to_plain(await asyncio.to_thread(self._client.get_balance_allowance, params))
 
@@ -134,10 +136,16 @@ class TradingService:
                 "(marketable limit). Provide `price`."
             )
         options = await self._resolve_options(req)
+        # Polymarket's CLOB caps order-amount precision and rejects sub-cent dust.
+        # Round the share size to 2 decimals so well-formed orders aren't rejected
+        # for excess precision (see llm.md, "Order amount precision"). Kept
+        # deliberately light: Polymarket may change the exact limits, so we round
+        # rather than hard-validate.
+        size = round(float(req.size), 2)
         order_args = OrderArgsV2(
             token_id=req.token_id,
             price=float(req.price),
-            size=float(req.size),
+            size=size,
             side=Side(req.side).value,
             expiration=int(req.expiration or 0),
             builder_code="",

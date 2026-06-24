@@ -12,7 +12,13 @@ from functools import lru_cache
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .constants import CHAIN_ID, CLOB_HOST, DATA_HOST, GAMMA_HOST, SIGNATURE_TYPE
+from .constants import (
+    CHAIN_ID,
+    CLOB_HOST,
+    DATA_HOST,
+    DEFAULT_SIGNATURE_TYPE,
+    GAMMA_HOST,
+)
 
 
 class Settings(BaseSettings):
@@ -27,7 +33,7 @@ class Settings(BaseSettings):
 
     # --- Account ---
     # PRIVATE_KEY signs orders (your EOA). FUNDER_ADDRESS is your Polymarket
-    # deposit-wallet address (Settings -> Profile -> Address); it holds the funds
+    # proxy-wallet address (Settings -> Profile -> Address); it holds the funds
     # and is the order maker. The two are different addresses.
     private_key: SecretStr | None = Field(default=None)
     funder_address: str | None = Field(default=None)
@@ -36,6 +42,12 @@ class Settings(BaseSettings):
     clob_api_key: SecretStr | None = Field(default=None)
     clob_secret: SecretStr | None = Field(default=None)
     clob_passphrase: SecretStr | None = Field(default=None)
+
+    # --- CLOB order signature type ---
+    # Which account model the funder uses (0 EOA, 1 proxy, 2 safe, 3 deposit
+    # wallet). Detected automatically at startup from which maker holds your funds
+    # and saved to .env; leave unset to auto-detect.
+    signature_type: int | None = Field(default=None)
 
     # --- Platform REST API protection ---
     platform_api_key: SecretStr | None = Field(default=None)
@@ -68,10 +80,26 @@ class Settings(BaseSettings):
             raise ValueError("FUNDER_ADDRESS must be a 0x-prefixed 42-char address")
         return value
 
+    @field_validator("signature_type")
+    @classmethod
+    def _valid_signature_type(cls, value: int | None) -> int | None:
+        if value is not None and value not in (0, 1, 2, 3):
+            raise ValueError("SIGNATURE_TYPE must be one of 0, 1, 2, 3")
+        return value
+
     # --- Derived helpers ---
     @property
     def has_wallet(self) -> bool:
         return self.private_key is not None and self.funder_address is not None
+
+    @property
+    def resolved_signature_type(self) -> int:
+        """Signature type to use, falling back to the default when unset."""
+        return (
+            self.signature_type
+            if self.signature_type is not None
+            else DEFAULT_SIGNATURE_TYPE
+        )
 
     @property
     def has_clob_creds(self) -> bool:
@@ -90,7 +118,7 @@ class Settings(BaseSettings):
         return {
             "mode": "dry-run" if self.dry_run else "LIVE",
             "chain_id": CHAIN_ID,
-            "signature_type": SIGNATURE_TYPE,
+            "signature_type": self.resolved_signature_type,
             "wallet_address": self.funder_address,
             "wallet_configured": self.has_wallet,
             "clob_creds_configured": self.has_clob_creds,

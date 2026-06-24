@@ -11,7 +11,10 @@ CLOB_HOST = "https://clob.polymarket.com"
 DATA_HOST = "https://data-api.polymarket.com"
 
 # --- CLOB order signature type ---
-# 3 = EIP-1271 "deposit wallet": Polymarket's current account model. Orders are
-# signed with your EOA key and validated on-chain by the deposit-wallet contract
-# via EIP-1271. This is the only flow this platform supports.
-SIGNATURE_TYPE = 3
+# How the order maker (FUNDER_ADDRESS) relates to the signer (PRIVATE_KEY):
+#   0 = EOA, 1 = POLY_PROXY (email/Google sign-up), 2 = POLY_GNOSIS_SAFE
+#   (browser wallet), 3 = POLY_1271 (deposit wallet).
+# The correct value is detected automatically at startup from which maker holds
+# your funds (see core.sigtype) and saved to .env. This is only the fallback used
+# when detection finds no funds and no value is configured.
+DEFAULT_SIGNATURE_TYPE = 1

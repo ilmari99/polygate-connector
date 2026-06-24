@@ -7,14 +7,13 @@ whether algorithmic or LLM-driven, can start trading on
 or on-chain plumbing. Your agent just speaks JSON over HTTP, in **any language**.
 
 - **Language-agnostic** - your agent talks to a local REST API, not a Python SDK.
-- **One account model** - the modern Polymarket **deposit wallet** (EIP-1271,
-  signature type 3).
+- **Works with your Polymarket account** - email/Google sign-up (proxy wallet), a
+  connected browser wallet (Gnosis Safe), a deposit wallet, or a plain EOA.
+  PolyGate detects the right order **signature type** for you at startup.
 - **Polymarket-native** - no on-chain setup, no token allowances, no separate RPC.
   Fund your account on polymarket.com and trade; all orders, fills, and history
   show up on your normal Polymarket account.
 
-> This is an MVP: it supports the deposit-wallet flow Polymarket uses today, and
-> nothing else.
 
 ## How it works
 
@@ -22,7 +21,7 @@ or on-chain plumbing. Your agent just speaks JSON over HTTP, in **any language**
 flowchart LR
     Agent["Your agent\n(any language)"] -- "X-API-Key + JSON" --> API["PolyGate\n(FastAPI)"]
     API --> Gamma["Gamma API\n(markets, events)"]
-    API --> CLOB["CLOB API\n(book, orders - signed,\ndeposit wallet EIP-1271)"]
+    API --> CLOB["CLOB API\n(book, orders - signed,\nyour account's sig type)"]
     API --> Data["Data API\n(positions, activity)"]
 ```
 
@@ -34,10 +33,11 @@ Trading on Polymarket involves two addresses, and you provide both:
   **Settings → Account → Private Key** - that is your signer, no MetaMask needed.
   If you instead connected your own wallet, export *its* private key. Either way
   you do not need a new wallet.
-- **Your deposit wallet** (`FUNDER_ADDRESS`) - the account Polymarket provisions
-  for you that actually **holds your USDC** and is the order maker. Polymarket
-  validates your signature against it on-chain (EIP-1271). You never get a
-  separate key for it; your wallet above controls it.
+- **Your funding wallet** (`FUNDER_ADDRESS`) - the Polymarket account that
+  actually **holds your USDC** and is the order maker. Your orders are
+  signed by your wallet above with this address as the maker, using the signature
+  type PolyGate detects. You never get a separate key for it; your wallet above
+  controls it.
 
 This service only **reads market/account data** and **places/cancels orders**. It does not manage your wallet, does not handle deposits or withdrawals, and does not sign any transactions other than orders, and does not provide any algorithmic trading logic. It is a thin, secure, abstraction layer on top of Polymarket's APIs so you can build your own trading agent in any language.
 
@@ -65,16 +65,13 @@ to `.env` and fill in:
   **Settings → Account → Private Key** and reveal it. (If you connected your own
   wallet such as MetaMask instead of signing up directly, export the key from that
   wallet instead.) **Keep it secret.**
-- **`FUNDER_ADDRESS`** - your deposit-wallet address, shown on polymarket.com
-  under **Settings → Profile → Address**. It is different from your signer's
-  address.
+- **`FUNDER_ADDRESS`** - the address that holds your funds and is the order maker, shown on polymarket.com under
+  **Settings → Profile → Address**.
 
-Then set `PLATFORM_API_KEY` to any random value (it guards the account-only
-endpoints of this REST API).
-
-That is all the setup you need: the **CLOB credentials are derived automatically
-from your wallet key the first time the server starts**, and saved back to
-`.env`.
+That is all you provide. On first start PolyGate **generates a `PLATFORM_API_KEY`**, **derives the CLOB
+credentials from your wallet key**, and **detects your order `SIGNATURE_TYPE`**
+from which maker holds your funds, saving them all back to `.env`. Read the
+generated `PLATFORM_API_KEY` from `.env` to call the protected endpoints.
 
 ### 3. Run
 
@@ -93,17 +90,19 @@ All configuration is environment-driven; see [.env.example](.env.example).
 | Variable           | Required | Description                                                              |
 | ------------------ | :------: | ------------------------------------------------------------------------ |
 | `PRIVATE_KEY`      |   yes    | Private key of the wallet that signs your orders. **Keep secret.**       |
-| `FUNDER_ADDRESS`   |   yes    | Your Polymarket deposit address.                                         |
-| `PLATFORM_API_KEY` |   yes    | Shared secret for this REST API. Sent as the `X-API-Key` header.         |
+| `FUNDER_ADDRESS`   |   yes    | The address that holds your funds and makes your orders (proxy or deposit wallet). |
+| `PLATFORM_API_KEY` |   auto   | Shared secret for this REST API, sent as the `X-API-Key` header. Generated on first start. |
 | `CLOB_API_KEY`     |   auto   | Auto-derived from your wallet key at startup.                            |
 | `CLOB_SECRET`      |   auto   | Auto-derived from your wallet key at startup.                            |
 | `CLOB_PASSPHRASE`  |   auto   | Auto-derived from your wallet key at startup.                            |
+| `SIGNATURE_TYPE`   |   auto   | Order signature type (`0`-`3`). Auto-detected at startup; set to override. |
 | `HOST` / `PORT`    |    no    | Server bind address (default `127.0.0.1:8000`).                          |
 | `LOG_LEVEL`        |    no    | Logging level (default `INFO`).                                          |
 
-The server refuses to start without `PLATFORM_API_KEY` (it protects the account
-endpoints) or without a wallet; the CLOB credentials it needs are derived
-automatically on first start.
+The server needs a wallet (`PRIVATE_KEY` + `FUNDER_ADDRESS`) to start; the
+`PLATFORM_API_KEY` that protects the account endpoints, the CLOB credentials, and
+your order signature type are all generated or detected automatically on first
+start and saved to `.env`.
 
 ## Using the API
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -13,8 +14,10 @@ from pydantic import SecretStr
 from . import __version__
 from .api import routes_market, routes_portfolio, routes_system, routes_trading
 from .config import Settings, get_settings
+from .core.env_file import find_env_path, upsert_env
 from .core.errors import PlatformError
 from .core.logging import configure_logging, log
+from .core.sigtype import detect_signature_type
 from .services.credentials import derive_clob_credentials, store_clob_credentials
 from .services.facade import PolymarketService
 
@@ -23,9 +26,11 @@ from .services.facade import PolymarketService
 async def lifespan(app: FastAPI):
     settings: Settings = get_settings()
     configure_logging(settings.log_level)
+    _ensure_platform_api_key(settings)
     _startup_checks(settings)
     if not settings.dry_run:
         await _ensure_clob_credentials(settings)
+        await _ensure_signature_type(settings)
     app.state.service = PolymarketService(settings)
     suffix = "  [DRY_RUN: orders simulated]" if settings.dry_run else ""
     log.info("PolyGate ready; wallet=%s%s", settings.funder_address, suffix)
@@ -38,11 +43,6 @@ async def lifespan(app: FastAPI):
 
 def _startup_checks(settings: Settings) -> None:
     """Fail fast on insecure or inconsistent configuration."""
-    if settings.platform_api_key is None:
-        raise RuntimeError(
-            "PLATFORM_API_KEY is not set. Refusing to start a trading API whose "
-            "account endpoints would be unprotected. Add PLATFORM_API_KEY to your .env."
-        )
     if settings.dry_run:
         log.warning("DRY_RUN enabled: orders are simulated, not sent (developer mode).")
         return
@@ -50,6 +50,22 @@ def _startup_checks(settings: Settings) -> None:
         raise RuntimeError(
             "PRIVATE_KEY and FUNDER_ADDRESS must be set. See the README (Setup)."
         )
+
+
+def _ensure_platform_api_key(settings: Settings) -> None:
+    """Generate and persist a PLATFORM_API_KEY on first run when missing.
+
+    Onboarding only requires the two values from polymarket.com (PRIVATE_KEY and
+    FUNDER_ADDRESS); the platform's own ``X-API-Key`` guard is created here and
+    saved back to ``.env`` for next time, exactly like the CLOB credentials.
+    """
+    if settings.platform_api_key is not None:
+        return
+    key = secrets.token_urlsafe(32)
+    path = find_env_path()
+    upsert_env(path, {"PLATFORM_API_KEY": key})
+    settings.platform_api_key = SecretStr(key)
+    log.info("PLATFORM_API_KEY missing; generated one and saved to %s.", path)
 
 
 async def _ensure_clob_credentials(settings: Settings) -> None:
@@ -74,6 +90,36 @@ async def _ensure_clob_credentials(settings: Settings) -> None:
     settings.clob_secret = SecretStr(creds["CLOB_SECRET"])
     settings.clob_passphrase = SecretStr(creds["CLOB_PASSPHRASE"])
     log.info("CLOB credentials derived and saved to %s.", path)
+
+
+async def _ensure_signature_type(settings: Settings) -> None:
+    """Detect and persist the CLOB signature type on first run when unset.
+
+    The correct type is the account model whose maker holds your funds; it is
+    detected by probing each type's collateral balance and saved back to ``.env``.
+    If no type shows a balance (e.g. an unfunded account) the server warns and
+    proceeds with the default, leaving ``.env`` untouched so detection retries on
+    the next start once the account is funded.
+    """
+    if settings.signature_type is not None:
+        return
+    try:
+        detected = await asyncio.to_thread(detect_signature_type, settings)
+    except Exception as exc:  # noqa: BLE001 - detection must never block startup
+        log.warning("Signature-type detection failed (%s); using default.", exc)
+        return
+    if detected is None:
+        log.warning(
+            "No funds found for any signature type; assuming SIGNATURE_TYPE=%d. "
+            "Fund the account and restart to auto-detect, or set SIGNATURE_TYPE "
+            "in .env to override.",
+            settings.resolved_signature_type,
+        )
+        return
+    path = find_env_path()
+    upsert_env(path, {"SIGNATURE_TYPE": str(detected)})
+    settings.signature_type = detected
+    log.info("Detected SIGNATURE_TYPE=%d and saved to %s.", detected, path)
 
 
 def create_app() -> FastAPI:

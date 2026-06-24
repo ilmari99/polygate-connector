@@ -14,7 +14,7 @@ from pathlib import Path
 from py_clob_client_v2.client import ClobClient
 
 from ..config import Settings
-from ..constants import CHAIN_ID, SIGNATURE_TYPE
+from ..constants import CHAIN_ID
 from ..core.env_file import find_env_path, upsert_env
 from ..core.errors import ConfigurationError
 
@@ -33,7 +33,7 @@ def derive_clob_credentials(settings: Settings) -> dict[str, str]:
         host=settings.clob_host,
         chain_id=CHAIN_ID,
         key=settings.private_key.get_secret_value(),
-        signature_type=SIGNATURE_TYPE,
+        signature_type=settings.resolved_signature_type,
         funder=settings.funder_address,
     )
     creds = client.create_or_derive_api_key()

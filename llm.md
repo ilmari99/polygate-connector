@@ -452,6 +452,17 @@ human dollars, but `/portfolio/balance.balance` is a raw 6-decimal integer strin
 Before placing an order, check you have enough **USDC** (`balance / 1e6`) for
 `price × size`.
 
+### Confirm the server config - `GET /config`
+
+Returns a secret-free summary of the running server: `mode` (`LIVE` or
+`dry-run`), `wallet_address` (your funder / order maker), `signature_type` (the
+account model PolyGate detected and signs with - `0` EOA, `1` proxy, `2` Gnosis
+Safe, `3` deposit wallet), `chain_id`, and which credentials are configured. You
+don't act on these, but they let you confirm the server is **LIVE** and pointed at
+the account you expect before placing real orders. The correct signature type is
+detected and handled for you, so `/portfolio/balance` already reflects the right
+maker.
+
 ---
 
 ## 11. Place & manage orders
@@ -498,6 +509,26 @@ result = post("/orders", {
 
 ¹ `price` is required for `GTC`, `GTD`, `FOK`, and `FAK`. `FOK`/`FAK` are
 marketable but still take an explicit limit price as a worst-acceptable bound.
+
+**Order amount precision**
+
+Polymarket's CLOB caps how precise an order's amounts can be, and rejects orders
+that are too small or too finely divided:
+
+- **Minimum size:** a marketable (`FOK`/`FAK`) order must be worth **at least
+  $1.00** (`size × price`). Smaller orders are rejected (e.g. `$0.9999`).
+- **Amount precision:** for a market **BUY** the dollar amount (`size × price`,
+  the *maker* amount) may have **at most 2 decimals** (whole cents), while the
+  *taker* amount (shares) may have at most 4. For a **SELL** it is the other way
+  around — the share `size` (maker) is the one limited to 2 decimals.
+- **PolyGate auto-rounds `size` to 2 decimals** before signing, so you never need
+  sub-cent share counts. It does **not** invent or pad the dollar amount.
+
+Practical recipe to avoid rejections: on a `0.01`-tick market, use **whole-number
+share counts** so the dollar amount always lands on clean cents — e.g. `10 shares
+× $0.10 = $1.00` fills, whereas `9.55 × $0.11 = $1.0505` is rejected for having
+four-decimal cents. Size to a round dollar target rather than a fractional share
+count.
 
 **Order types**
 
