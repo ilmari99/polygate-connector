@@ -134,10 +134,29 @@ async def search(
     events_status: str | None = Query(default=None, description="e.g. 'active', 'resolved'."),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
-    """Full-text search across Polymarket events and markets (Gamma)."""
+    """Full-text search across Polymarket events and markets (Gamma).
+
+    Gamma groups markets under events, so token ids live at
+    ``events[].markets[].clobTokenIds``. For convenience we also surface a flat
+    top-level ``markets`` array (each entry tagged with its parent
+    ``event_id``/``event_title``) so callers can read ``clobTokenIds`` directly
+    without drilling into every event.
+    """
     data = await service.gamma.search(
         q, limit_per_type=limit_per_type, page=page, events_status=events_status
     )
+    if isinstance(data, dict) and "markets" not in data:
+        flat: list[dict] = []
+        for event in data.get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            event_id = event.get("id")
+            event_title = event.get("title")
+            for market in event.get("markets") or []:
+                if not isinstance(market, dict):
+                    continue
+                flat.append({**market, "event_id": event_id, "event_title": event_title})
+        data = {**data, "markets": flat}
     return ResponseEnvelope.of(data, source="gamma")
 
 

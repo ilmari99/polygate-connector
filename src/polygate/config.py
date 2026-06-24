@@ -7,7 +7,9 @@ user-facing description of the active configuration.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,11 +23,24 @@ from .constants import (
 )
 
 
+def _env_file() -> str:
+    """Where to load ``.env`` from.
+
+    When ``POLYGATE_DATA_DIR`` is set (the OpenClaw plugin passes it on spawn)
+    read the persisted ``.env`` from there so it matches where the key is
+    written; otherwise fall back to the cwd-relative ``.env`` as before.
+    """
+    override = os.environ.get("POLYGATE_DATA_DIR")
+    if override:
+        return str(Path(override).expanduser() / ".env")
+    return ".env"
+
+
 class Settings(BaseSettings):
     """Runtime settings for the trading platform."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_env_file(),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

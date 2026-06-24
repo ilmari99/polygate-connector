@@ -100,6 +100,37 @@ def test_search_routes_to_gamma(auth_headers):
 
 
 @respx.mock
+def test_search_flattens_markets_with_event_context(auth_headers):
+    respx.get("https://gamma-api.polymarket.com/public-search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "events": [
+                    {
+                        "id": "42",
+                        "title": "Will it rain?",
+                        "markets": [
+                            {"id": "m1", "clobTokenIds": "[\"111\",\"222\"]"},
+                        ],
+                    }
+                ],
+                "pagination": {"hasMore": False},
+            },
+        )
+    )
+    with TestClient(create_app()) as client:
+        body = client.get(
+            "/search", params={"q": "rain"}, headers=auth_headers
+        ).json()
+        markets = body["data"]["markets"]
+        assert len(markets) == 1
+        assert markets[0]["id"] == "m1"
+        assert markets[0]["clobTokenIds"] == "[\"111\",\"222\"]"
+        assert markets[0]["event_id"] == "42"
+        assert markets[0]["event_title"] == "Will it rain?"
+
+
+@respx.mock
 def test_comments_routes_to_gamma(auth_headers):
     route = respx.get("https://gamma-api.polymarket.com/comments").mock(
         return_value=httpx.Response(200, json=[{"id": "c1", "body": "hi"}])

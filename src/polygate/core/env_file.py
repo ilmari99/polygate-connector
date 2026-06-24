@@ -5,22 +5,52 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+DEFAULT_DATA_DIR = Path.home() / ".polygate"
+
+
+def data_dir() -> Path:
+    """The directory PolyGate persists its ``.env`` (key + wallet) into.
+
+    Honors ``POLYGATE_DATA_DIR`` (set by the OpenClaw plugin on spawn) so the
+    server and the plugin always agree on where the key lives; defaults to
+    ``~/.polygate``. Never tied to the package install location, which is
+    ephemeral under ``uvx``.
+    """
+    override = os.environ.get("POLYGATE_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    return DEFAULT_DATA_DIR
+
 
 def find_env_path() -> Path:
-    """Locate the project's ``.env`` (cwd first, else repo root next to src)."""
+    """Locate the ``.env`` to read/write.
+
+    Precedence: explicit ``POLYGATE_DATA_DIR`` wins, then an existing ``.env`` in
+    the cwd or repo root (local development), else the default data dir. The old
+    behaviour of writing next to ``__file__`` is gone — under ``uvx`` that path
+    is an ephemeral cache dir that changes every version.
+    """
+    override = os.environ.get("POLYGATE_DATA_DIR")
+    if override:
+        return Path(override).expanduser() / ".env"
     cwd_env = Path.cwd() / ".env"
     if cwd_env.exists():
         return cwd_env
     # repo root = three parents up from this file: core/ -> polygate/ -> src/ -> root
-    return Path(__file__).resolve().parents[3] / ".env"
+    repo_env = Path(__file__).resolve().parents[3] / ".env"
+    if repo_env.exists():
+        return repo_env
+    return DEFAULT_DATA_DIR / ".env"
 
 
 def upsert_env(path: Path, values: dict[str, str]) -> None:
     """Insert or update ``KEY=value`` pairs in ``path`` without touching others.
 
-    Preserves comments and ordering; appends new keys at the end. Re-applies
-    ``chmod 600`` afterwards so secrets stay private.
+    Preserves comments and ordering; appends new keys at the end. Creates the
+    parent directory if needed and re-applies ``chmod 600`` afterwards so secrets
+    stay private.
     """
+    path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     if path.exists():
         lines = path.read_text().splitlines()
