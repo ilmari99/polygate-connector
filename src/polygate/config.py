@@ -7,9 +7,7 @@ user-facing description of the active configuration.
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,19 +19,18 @@ from .constants import (
     DEFAULT_SIGNATURE_TYPE,
     GAMMA_HOST,
 )
+from .core.env_file import find_env_path
 
 
 def _env_file() -> str:
     """Where to load ``.env`` from.
 
-    When ``POLYGATE_DATA_DIR`` is set (the OpenClaw plugin passes it on spawn)
-    read the persisted ``.env`` from there so it matches where the key is
-    written; otherwise fall back to the cwd-relative ``.env`` as before.
+    Delegates to :func:`find_env_path` so the server reads its configuration from
+    exactly the same file that setup writes to. Resolving this in two places used
+    to drift (write to ``~/.polygate/.env`` but read a cwd-relative ``.env``),
+    which silently dropped the wallet on restart.
     """
-    override = os.environ.get("POLYGATE_DATA_DIR")
-    if override:
-        return str(Path(override).expanduser() / ".env")
-    return ".env"
+    return str(find_env_path())
 
 
 class Settings(BaseSettings):

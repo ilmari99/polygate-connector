@@ -8,10 +8,15 @@ clear the settings cache so each test sees a clean configuration.
 from __future__ import annotations
 
 import os
+import tempfile
 
 import pytest
 
-# Configure a safe environment BEFORE importing application modules.
+# Configure a safe environment BEFORE importing application modules. Pin
+# POLYGATE_DATA_DIR at an isolated empty dir so config reads no real ``.env``
+# from the developer's machine (the server reads from this data dir too); tests
+# that exercise other paths override it per-test with monkeypatch.
+os.environ["POLYGATE_DATA_DIR"] = tempfile.mkdtemp(prefix="polygate-test-")
 os.environ.setdefault("PLATFORM_API_KEY", "test-platform-key")
 os.environ.setdefault("DRY_RUN", "true")
 os.environ.setdefault("FUNDER_ADDRESS", "0x000000000000000000000000000000000000dEaD")

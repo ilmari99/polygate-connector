@@ -45,3 +45,15 @@ def test_upsert_env_creates_missing_data_dir(tmp_path: Path):
     assert target.exists()
     assert "PLATFORM_API_KEY=abc123" in target.read_text()
     assert (target.stat().st_mode & 0o777) == 0o600
+
+
+def test_config_reads_from_the_file_setup_writes(monkeypatch: pytest.MonkeyPatch):
+    """The startup config and the setup writer must resolve the same ``.env``.
+
+    Regression for a path mismatch where the wallet was written to the data dir
+    but read back from a cwd-relative ``.env``, so it silently vanished on
+    restart.
+    """
+    from polygate.config import _env_file
+
+    assert _env_file() == str(find_env_path())
