@@ -29,10 +29,3 @@ class ResponseEnvelope(BaseModel, Generic[T]):
     @classmethod
     def of(cls, data: T, source: str) -> "ResponseEnvelope[T]":
         return cls(data=data, source=source, fetched_at=_utcnow())
-
-
-class ErrorResponse(BaseModel):
-    """Normalised error body returned for any failed request."""
-
-    error: str = Field(description="Machine-readable error code.")
-    detail: str = Field(description="Human-readable description.")

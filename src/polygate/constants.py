@@ -10,6 +10,11 @@ GAMMA_HOST = "https://gamma-api.polymarket.com"
 CLOB_HOST = "https://clob.polymarket.com"
 DATA_HOST = "https://data-api.polymarket.com"
 
+# Gamma caps a single ``/markets`` or ``/events`` page at 100 rows regardless of
+# the requested ``limit``. The facade transparently pages around this cap so a
+# caller asking for more than 100 actually receives them.
+GAMMA_PAGE_LIMIT = 100
+
 # --- CLOB order signature type ---
 # How the order maker (FUNDER_ADDRESS) relates to the signer (PRIVATE_KEY):
 #   0 = EOA, 1 = POLY_PROXY (email/Google sign-up), 2 = POLY_GNOSIS_SAFE

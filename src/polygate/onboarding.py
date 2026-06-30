@@ -22,12 +22,13 @@ from .core.sigtype import detect_signature_type
 from .services.credentials import derive_clob_credentials, store_clob_credentials
 
 
-async def ensure_clob_credentials(settings: Settings) -> None:
-    """Derive and persist CLOB API credentials when missing.
+async def ensure_clob_credentials(settings: Settings, *, persist: bool = True) -> None:
+    """Derive and apply CLOB API credentials when missing.
 
     The L2 credentials are deterministically derivable from the wallet key, so the
-    server obtains and persists them automatically. They are written back to
-    ``.env`` for next time.
+    server obtains them automatically and sets them on ``settings``. When
+    ``persist`` is true they are also written back to ``.env`` for next time; the
+    MCP server passes ``persist=False`` and re-derives fresh on each start.
     """
     if settings.has_clob_creds:
         return
@@ -39,21 +40,25 @@ async def ensure_clob_credentials(settings: Settings) -> None:
             f"Failed to derive CLOB credentials from the wallet key: {exc}. Check "
             "connectivity and PRIVATE_KEY, then try again."
         ) from exc
-    path = store_clob_credentials(creds)
     settings.clob_api_key = SecretStr(creds["CLOB_API_KEY"])
     settings.clob_secret = SecretStr(creds["CLOB_SECRET"])
     settings.clob_passphrase = SecretStr(creds["CLOB_PASSPHRASE"])
-    log.info("CLOB credentials derived and saved to %s.", path)
+    if persist:
+        path = store_clob_credentials(creds)
+        log.info("CLOB credentials derived and saved to %s.", path)
+    else:
+        log.info("CLOB credentials derived in memory for this session.")
 
 
-async def ensure_signature_type(settings: Settings) -> None:
-    """Detect and persist the CLOB signature type when unset.
+async def ensure_signature_type(settings: Settings, *, persist: bool = True) -> None:
+    """Detect and apply the CLOB signature type when unset.
 
     The correct type is the account model whose maker holds your funds; it is
-    detected by probing each type's collateral balance and saved back to ``.env``.
-    If no type shows a balance (e.g. an unfunded account) the server warns and
-    proceeds with the default, leaving ``.env`` untouched so detection retries on
-    the next start once the account is funded.
+    detected by probing each type's collateral balance and set on ``settings``
+    (and saved to ``.env`` when ``persist`` is true). If no type shows a balance
+    (e.g. an unfunded account) the server warns and proceeds with the default,
+    leaving things untouched so detection retries on the next start once the
+    account is funded.
     """
     if settings.signature_type is not None:
         return
@@ -70,23 +75,29 @@ async def ensure_signature_type(settings: Settings) -> None:
             settings.resolved_signature_type,
         )
         return
-    path = find_env_path()
-    upsert_env(path, {"SIGNATURE_TYPE": str(detected)})
     settings.signature_type = detected
-    log.info("Detected SIGNATURE_TYPE=%d and saved to %s.", detected, path)
+    if persist:
+        path = find_env_path()
+        upsert_env(path, {"SIGNATURE_TYPE": str(detected)})
+        log.info("Detected SIGNATURE_TYPE=%d and saved to %s.", detected, path)
+    else:
+        log.info("Detected order signature type %d.", detected)
 
 
-async def complete_onboarding(settings: Settings) -> None:
+async def complete_onboarding(settings: Settings, *, persist: bool = True) -> None:
     """Run the automatic first-start setup for a configured wallet.
 
     No-op in dry-run mode (nothing is ever signed) and when no wallet is present
     (the server simply waits for one via ``/setup``). Otherwise it derives the
-    CLOB credentials and detects the signature type, persisting both to ``.env``.
+    CLOB credentials and detects the signature type. ``persist`` controls whether
+    both are written back to ``.env``: the REST server persists them so they
+    survive a restart; the MCP server passes ``persist=False`` and re-derives
+    fresh each start, because its wallet always comes from the environment.
     """
     if settings.dry_run or not settings.has_wallet:
         return
-    await ensure_clob_credentials(settings)
-    await ensure_signature_type(settings)
+    await ensure_clob_credentials(settings, persist=persist)
+    await ensure_signature_type(settings, persist=persist)
 
 
 def save_wallet(settings: Settings, private_key: str, funder_address: str) -> Path:

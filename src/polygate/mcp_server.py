@@ -12,7 +12,7 @@ Configure your MCP host like::
       "mcpServers": {
         "polygate": {
           "command": "uvx",
-          "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.1.0", "polygate-mcp"],
+          "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.2.0", "polygate-mcp"],
           "env": {
             "FUNDER_ADDRESS": "0xYourWalletAddress...",
             "PRIVATE_KEY": "0xYourPrivateKey..."
@@ -29,34 +29,24 @@ startup. **Orders are real money once a funded wallet is configured.**
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from typing import Any
-
-from pydantic import SecretStr
 
 from . import __version__
 from .config import Settings, get_settings
 from .core import logging as core_logging
 from .core.errors import PlatformError
-from .core.sigtype import detect_signature_type
 from .models.order import OrderType, PlaceOrderRequest, Side
-from .services.credentials import derive_clob_credentials
+from .onboarding import complete_onboarding
 from .services.facade import PolymarketService
 
 log = logging.getLogger("polygate.mcp")
 
 # Process-wide service, built once during the server lifespan.
 _service: PolymarketService | None = None
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _configure_stderr_logging(level: str = "INFO") -> None:
@@ -84,44 +74,21 @@ def _configure_stderr_logging(level: str = "INFO") -> None:
 async def _onboard(settings: Settings) -> None:
     """Make the wallet trade-ready in memory (derive creds, detect sig type).
 
-    Unlike the REST server's onboarding, nothing is persisted: the wallet always
-    comes from the environment, so deriving the CLOB credentials freshly on each
-    start keeps them consistent with the current wallet and avoids a stale
-    credential ever being used after the user swaps ``PRIVATE_KEY``.
-    Explicit ``CLOB_*`` / ``SIGNATURE_TYPE`` environment overrides are respected.
+    Reuses the shared onboarding routine with ``persist=False``: unlike the REST
+    server nothing is written to ``.env``, because the wallet always comes from
+    the environment, so deriving fresh each start keeps credentials consistent
+    after a key swap (explicit ``CLOB_*`` / ``SIGNATURE_TYPE`` env overrides are
+    respected). A failure is non-fatal - research tools still work - so we log
+    and continue rather than crash the stdio server.
     """
-    if settings.dry_run or not settings.has_wallet:
-        return
-
-    clob_overridden = all(
-        os.environ.get(name)
-        for name in ("CLOB_API_KEY", "CLOB_SECRET", "CLOB_PASSPHRASE")
-    )
-    if not clob_overridden:
-        try:
-            creds = await asyncio.to_thread(derive_clob_credentials, settings)
-        except Exception as exc:  # noqa: BLE001 - surface, don't crash the server
-            log.warning(
-                "Could not derive CLOB credentials (%s); trading tools will be "
-                "inactive until the wallet/connectivity is fixed. Research tools "
-                "still work.",
-                exc,
-            )
-            return
-        settings.clob_api_key = SecretStr(creds["CLOB_API_KEY"])
-        settings.clob_secret = SecretStr(creds["CLOB_SECRET"])
-        settings.clob_passphrase = SecretStr(creds["CLOB_PASSPHRASE"])
-        log.info("Derived CLOB credentials for the configured wallet.")
-
-    if settings.signature_type is None and settings.has_clob_creds:
-        try:
-            detected = await asyncio.to_thread(detect_signature_type, settings)
-        except Exception as exc:  # noqa: BLE001 - detection must never be fatal
-            log.warning("Signature-type detection failed (%s); using default.", exc)
-            detected = None
-        if detected is not None:
-            settings.signature_type = detected
-            log.info("Detected order signature type %d.", detected)
+    try:
+        await complete_onboarding(settings, persist=False)
+    except Exception as exc:  # noqa: BLE001 - never crash the MCP server on onboarding
+        log.warning(
+            "Wallet onboarding incomplete (%s); trading tools inactive until the "
+            "wallet/connectivity is fixed. Research tools still work.",
+            exc,
+        )
 
 
 def _require_service() -> PolymarketService:
@@ -130,40 +97,18 @@ def _require_service() -> PolymarketService:
     return _service
 
 
-async def _data(source: str, awaitable: Any) -> dict[str, Any]:
-    """Await an upstream read and wrap it like the REST data envelope.
+async def _serialize(awaitable: Any) -> dict[str, Any]:
+    """Await a core operation and return a JSON-able dict for the MCP host.
 
-    Returns ``{data, fetched_at, source}`` on success or ``{error, detail}`` on a
-    handled :class:`PlatformError`, so the model always receives a structured,
-    machine-readable result instead of an opaque exception.
+    Maps a handled :class:`PlatformError` to ``{error, detail}`` so the model
+    always receives a structured result instead of an opaque exception, and dumps
+    pydantic results (response envelopes, order results) to plain JSON types.
     """
     try:
-        data = await awaitable
+        result = await awaitable
     except PlatformError as exc:
         return {"error": exc.code, "detail": exc.message}
-    return {"data": data, "fetched_at": _utcnow_iso(), "source": source}
-
-
-def _flatten_search(data: Any) -> Any:
-    """Surface a flat ``markets`` list on search results (mirrors the REST route).
-
-    Gamma groups markets under events, so token ids live at
-    ``events[].markets[].clobTokenIds``. We also expose a top-level ``markets``
-    array (each entry tagged with its parent ``event_id``/``event_title``) so a
-    caller can read ``clobTokenIds`` directly.
-    """
-    if not isinstance(data, dict) or "markets" in data:
-        return data
-    flat: list[dict] = []
-    for event in data.get("events") or []:
-        if not isinstance(event, dict):
-            continue
-        event_id = event.get("id")
-        event_title = event.get("title")
-        for market in event.get("markets") or []:
-            if isinstance(market, dict):
-                flat.append({**market, "event_id": event_id, "event_title": event_title})
-    return {**data, "markets": flat}
+    return result.model_dump(mode="json")
 
 
 @asynccontextmanager
@@ -258,33 +203,38 @@ async def list_markets(
     offset: int = 0,
     order: str | None = None,
     ascending: bool | None = None,
+    compact: bool = False,
 ) -> dict[str, Any]:
     """List markets (Gamma). Pass `slug` to fetch one market by its slug.
 
-    Each market carries a `conditionId` and a JSON-encoded `clobTokenIds` array
-    (the Yes/No outcome token ids you trade on).
+    Each market carries a `conditionId` and a `clobTokenIds` array (the Yes/No
+    outcome token ids you trade on); `outcomes` and `outcomePrices` are arrays
+    too. A `limit` over 100 is paged automatically past Gamma's per-page cap.
+    Set `compact=True` to drop low-signal fields (descriptions, images, AMM
+    internals) and shrink the payload.
     """
-    service = _require_service()
-    if slug:
-        return await _data("gamma", service.gamma.get_market_by_slug(slug))
-    return await _data(
-        "gamma",
-        service.gamma.list_markets(
+    return await _serialize(
+        _require_service().list_markets(
             active=active,
             closed=closed,
             tag_id=tag_id,
+            slug=slug,
             limit=limit,
             offset=offset,
             order=order,
             ascending=ascending,
-        ),
+            compact=compact,
+        )
     )
 
 
 @mcp.tool()
-async def get_market(condition_id: str) -> dict[str, Any]:
-    """Fetch a single market by its `conditionId` (0x...)."""
-    return await _data("gamma", _require_service().gamma.get_market(condition_id))
+async def get_market(condition_id: str, compact: bool = False) -> dict[str, Any]:
+    """Fetch a single market by its `conditionId` (0x...).
+
+    Set `compact=True` to drop low-signal fields.
+    """
+    return await _serialize(_require_service().get_market(condition_id, compact=compact))
 
 
 @mcp.tool()
@@ -295,20 +245,30 @@ async def list_events(
     limit: int = 50,
     offset: int = 0,
     order: str | None = None,
+    compact: bool = False,
 ) -> dict[str, Any]:
-    """List events (each event groups one or more markets)."""
-    return await _data(
-        "gamma",
-        _require_service().gamma.list_events(
-            active=active, closed=closed, tag_id=tag_id, limit=limit, offset=offset, order=order
-        ),
+    """List events (each event groups one or more markets).
+
+    A `limit` over 100 is paged automatically past Gamma's per-page cap. Set
+    `compact=True` to drop low-signal fields and compact the nested markets.
+    """
+    return await _serialize(
+        _require_service().list_events(
+            active=active,
+            closed=closed,
+            tag_id=tag_id,
+            limit=limit,
+            offset=offset,
+            order=order,
+            compact=compact,
+        )
     )
 
 
 @mcp.tool()
 async def list_tags() -> dict[str, Any]:
     """List the category tags markets can be filtered by."""
-    return await _data("gamma", _require_service().gamma.list_tags())
+    return await _serialize(_require_service().list_tags())
 
 
 @mcp.tool()
@@ -318,7 +278,7 @@ async def get_order_book(token_id: str) -> dict[str, Any]:
     Bid/ask arrays are not guaranteed sorted: best bid is the max bid price, best
     ask is the min ask price.
     """
-    return await _data("clob", _require_service().clob.order_book(token_id))
+    return await _serialize(_require_service().order_book(token_id))
 
 
 @mcp.tool()
@@ -329,25 +289,25 @@ async def get_price(token_id: str, side: str = "BUY") -> dict[str, Any]:
     pay to BUY is the ask (query side=SELL); the price you get to SELL is the bid
     (query side=BUY).
     """
-    return await _data("clob", _require_service().clob.price(token_id, side))
+    return await _serialize(_require_service().price(token_id, side))
 
 
 @mcp.tool()
 async def get_midpoint(token_id: str) -> dict[str, Any]:
     """Order-book midpoint for an outcome token - a fair-value estimate."""
-    return await _data("clob", _require_service().clob.midpoint(token_id))
+    return await _serialize(_require_service().midpoint(token_id))
 
 
 @mcp.tool()
 async def get_spread(token_id: str) -> dict[str, Any]:
     """Current bid/ask spread for an outcome token."""
-    return await _data("clob", _require_service().clob.spread(token_id))
+    return await _serialize(_require_service().spread(token_id))
 
 
 @mcp.tool()
 async def get_last_trade_price(token_id: str) -> dict[str, Any]:
     """Last traded price for an outcome token."""
-    return await _data("clob", _require_service().clob.last_trade_price(token_id))
+    return await _serialize(_require_service().last_trade_price(token_id))
 
 
 @mcp.tool()
@@ -364,11 +324,10 @@ async def get_prices_history(
     `start_ts`/`end_ts` Unix-seconds window. `fidelity` is the resolution in
     minutes.
     """
-    return await _data(
-        "clob",
-        _require_service().clob.prices_history(
+    return await _serialize(
+        _require_service().prices_history(
             token_id, interval=interval, start_ts=start_ts, end_ts=end_ts, fidelity=fidelity
-        ),
+        )
     )
 
 
@@ -381,21 +340,25 @@ async def search(
     limit_per_type: int | None = None,
     page: int | None = None,
     events_status: str | None = None,
+    compact: bool = False,
 ) -> dict[str, Any]:
     """Full-text search over Polymarket events and markets.
 
     Results group under `events`; a flat `markets` array is also returned (each
     entry tagged with `event_id`/`event_title`) so you can read `clobTokenIds`
-    directly. `events_status` may be e.g. 'active' or 'resolved'.
+    directly - decoded to an array, like `outcomes` and `outcomePrices`.
+    `events_status` may be e.g. 'active' or 'resolved'. Set `compact=True` to
+    drop low-signal fields.
     """
-    service = _require_service()
-    try:
-        data = await service.gamma.search(
-            q, limit_per_type=limit_per_type, page=page, events_status=events_status
+    return await _serialize(
+        _require_service().search(
+            q,
+            limit_per_type=limit_per_type,
+            page=page,
+            events_status=events_status,
+            compact=compact,
         )
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return {"data": _flatten_search(data), "fetched_at": _utcnow_iso(), "source": "gamma"}
+    )
 
 
 @mcp.tool()
@@ -407,11 +370,10 @@ async def get_comments(
     ascending: bool | None = None,
 ) -> dict[str, Any]:
     """Public comments on an event (by its numeric event id). Unverified sentiment."""
-    return await _data(
-        "gamma",
-        _require_service().gamma.list_comments(
-            parent_entity_id=event_id, limit=limit, offset=offset, order=order, ascending=ascending
-        ),
+    return await _serialize(
+        _require_service().comments(
+            event_id, limit=limit, offset=offset, order=order, ascending=ascending
+        )
     )
 
 
@@ -422,7 +384,7 @@ async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
     Each holder has `amount`, `outcomeIndex`, `proxyWallet`, `pseudonym` - a
     signal about how much money sits on each side.
     """
-    return await _data("data", _require_service().data.holders(condition_id, limit=limit))
+    return await _serialize(_require_service().holders(condition_id, limit=limit))
 
 
 # --------------------------------------------------------------------------- #
@@ -431,23 +393,13 @@ async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
 @mcp.tool()
 async def get_positions(limit: int = 100) -> dict[str, Any]:
     """Open positions for the configured wallet. Requires a wallet."""
-    service = _require_service()
-    try:
-        user = service.require_funder()
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return await _data("data", service.data.positions(user, limit=limit))
+    return await _serialize(_require_service().positions(limit=limit))
 
 
 @mcp.tool()
 async def get_portfolio_value() -> dict[str, Any]:
     """Current portfolio value (USD) for the configured wallet. Requires a wallet."""
-    service = _require_service()
-    try:
-        user = service.require_funder()
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return await _data("data", service.data.value(user))
+    return await _serialize(_require_service().portfolio_value())
 
 
 @mcp.tool()
@@ -457,23 +409,13 @@ async def get_balance(token_id: str | None = None) -> dict[str, Any]:
     USDC balances are raw 6-decimal integer strings: divide by 1,000,000 for
     dollars. Requires a configured wallet and CLOB credentials.
     """
-    service = _require_service()
-    try:
-        result = await service.trading().balance_allowance(conditional_token_id=token_id)
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return {"data": result, "fetched_at": _utcnow_iso(), "source": "clob"}
+    return await _serialize(_require_service().balance(token_id=token_id))
 
 
 @mcp.tool()
 async def get_activity(limit: int = 100) -> dict[str, Any]:
     """Account activity feed for the configured wallet. Requires a wallet."""
-    service = _require_service()
-    try:
-        user = service.require_funder()
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return await _data("data", service.data.activity(user, limit=limit))
+    return await _serialize(_require_service().activity(limit=limit))
 
 
 @mcp.tool()
@@ -485,23 +427,15 @@ async def get_open_orders(
     The CLOB may return nothing for a fully unfiltered query, so pass a `market`
     (condition id) or `asset_id` (token id) to list reliably.
     """
-    service = _require_service()
-    try:
-        result = await service.trading().open_orders(market=market, asset_id=asset_id)
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return {"data": result, "fetched_at": _utcnow_iso(), "source": "clob"}
+    return await _serialize(
+        _require_service().open_orders(market=market, asset_id=asset_id)
+    )
 
 
 @mcp.tool()
 async def get_trades() -> dict[str, Any]:
     """Trade history for the configured wallet. Requires a wallet."""
-    service = _require_service()
-    try:
-        result = await service.trading().trades()
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return {"data": result, "fetched_at": _utcnow_iso(), "source": "clob"}
+    return await _serialize(_require_service().trades())
 
 
 # --------------------------------------------------------------------------- #
@@ -534,7 +468,6 @@ async def place_order(
     For an instant taker fill: to buy set price >= best ask; to sell set
     price <= best bid.
     """
-    service = _require_service()
     try:
         req = PlaceOrderRequest(
             token_id=token_id,
@@ -548,33 +481,19 @@ async def place_order(
         )
     except ValueError as exc:
         return {"error": "validation_error", "detail": str(exc)}
-    try:
-        result = await service.place_order(req)
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return result.model_dump()
+    return await _serialize(_require_service().place_order(req))
 
 
 @mcp.tool()
 async def cancel_order(order_id: str) -> dict[str, Any]:
     """Cancel a single open order by its order id."""
-    service = _require_service()
-    try:
-        result = await service.cancel_order(order_id)
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return result.model_dump()
+    return await _serialize(_require_service().cancel_order(order_id))
 
 
 @mcp.tool()
 async def cancel_all_orders() -> dict[str, Any]:
     """Cancel all open orders for the configured wallet."""
-    service = _require_service()
-    try:
-        result = await service.cancel_all()
-    except PlatformError as exc:
-        return {"error": exc.code, "detail": exc.message}
-    return result.model_dump()
+    return await _serialize(_require_service().cancel_all())
 
 
 def run() -> None:

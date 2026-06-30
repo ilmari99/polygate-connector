@@ -1,12 +1,20 @@
 # PolyGate
 
-**PolyGate** is a small, opinionated REST gateway that puts Polymarket's Gamma,
-CLOB, and Data APIs behind one authenticated HTTP service - so a trading agent,
-whether algorithmic or LLM-driven, can start trading on
-[Polymarket](https://polymarket.com) without wrestling with SDKs, order signing,
-or on-chain plumbing. Your agent just speaks JSON over HTTP, in **any language**.
+**PolyGate** puts Polymarket's Gamma, CLOB, and Data APIs behind one small core
+service, exposed through two thin adapters so any agent can research markets and
+trade on [Polymarket](https://polymarket.com) without wrestling with SDKs, order
+signing, or on-chain plumbing:
 
-- **Language-agnostic** - your agent talks to a local REST API, not a Python SDK.
+- a **REST gateway** (FastAPI) your agent drives over HTTP in **any language**, and
+- an **MCP server** that drops the same capabilities straight into MCP-capable AI
+  hosts (VS Code, Claude Code, Claude Desktop, Cursor, OpenClaw, …) as tools — no
+  HTTP server, port, or API key for the agent to manage.
+
+Both adapters are thin shells over the same in-process core
+(`PolymarketService`), so they expose identical capabilities and behave the same
+way — pick whichever your agent speaks. The core owns all upstream access, order
+signing, and the dry-run safety switch; the adapters only translate transports.
+
 - **Works with your Polymarket account** - email/Google sign-up (proxy wallet), a
   connected browser wallet (Gnosis Safe), a deposit wallet, or a plain EOA.
   PolyGate detects the right order **signature type** for you at startup.
@@ -19,10 +27,11 @@ or on-chain plumbing. Your agent just speaks JSON over HTTP, in **any language**
 
 ```mermaid
 flowchart LR
-    Agent["Your agent\n(any language)"] -- "X-API-Key + JSON" --> API["PolyGate\n(FastAPI)"]
-    API --> Gamma["Gamma API\n(markets, events)"]
-    API --> CLOB["CLOB API\n(book, orders - signed,\nyour account's sig type)"]
-    API --> Data["Data API\n(positions, activity)"]
+    MCP["MCP host\n(VS Code, Claude Code, …)"] -- "MCP tools (stdio)" --> Core
+    Agent["Your agent\n(any language)"] -- "X-API-Key + JSON (HTTP)" --> Core["PolyGate core\n(PolymarketService)"]
+    Core --> Gamma["Gamma API\n(markets, events)"]
+    Core --> CLOB["CLOB API\n(book, orders - signed,\nyour account's sig type)"]
+    Core --> Data["Data API\n(positions, activity)"]
 ```
 
 Trading on Polymarket involves two addresses, and you provide both:
@@ -270,17 +279,36 @@ The server talks to the `PolymarketService` in-process, so it derives your CLOB
 credentials and detects your signature type fresh in memory at startup and never
 writes them to disk.
 
-### Configure your host
+### Run it with `uvx` (no install)
 
-Add PolyGate to your host's MCP config. With [uv](https://docs.astral.sh/uv/)
-installed, no cloning or install step is needed - `uvx` fetches and runs it:
+With [uv](https://docs.astral.sh/uv/) installed, no cloning or install step is
+needed - `uvx` fetches and launches `polygate-mcp` on demand. Point `--from` at
+either a pinned git ref or a **local checkout**:
+
+```bash
+# from a pinned git release
+uvx --from git+https://github.com/ilmari99/polygate@v0.2.0 polygate-mcp
+
+# from a local clone (use this while developing PolyGate itself)
+uvx --from /path/to/polygate polygate-mcp
+```
+
+Every example below uses that same command and passes your wallet via the host's
+`env`. Swap the git URL for a local path anywhere if you prefer to run your own
+checkout.
+
+### VS Code (Copilot agent mode)
+
+Create `.vscode/mcp.json` in your workspace. VS Code uses the `servers` key (not
+`mcpServers`) and a `type` field:
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "polygate": {
+      "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.1.0", "polygate-mcp"],
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.2.0", "polygate-mcp"],
       "env": {
         "FUNDER_ADDRESS": "0xYourFundingAddress",
         "PRIVATE_KEY": "0xYourSignerPrivateKey"
@@ -289,6 +317,88 @@ installed, no cloning or install step is needed - `uvx` fetches and runs it:
   }
 }
 ```
+
+Reload the window; the tools appear in the agent's tool picker. (Prefer not to
+commit secrets? Use VS Code input variables, or set `PRIVATE_KEY` in your
+environment and drop it from `env`.)
+
+### Claude Code
+
+Add it from the CLI (`--` separates Claude's flags from the server command):
+
+```bash
+claude mcp add polygate \
+  --env FUNDER_ADDRESS=0xYourFundingAddress \
+  --env PRIVATE_KEY=0xYourSignerPrivateKey \
+  -- uvx --from git+https://github.com/ilmari99/polygate@v0.2.0 polygate-mcp
+```
+
+Or share it with a repo by committing a project-scoped `.mcp.json` (uses the
+`mcpServers` key; `${VAR}` expands from your environment so no secret is stored):
+
+```json
+{
+  "mcpServers": {
+    "polygate": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.2.0", "polygate-mcp"],
+      "env": {
+        "FUNDER_ADDRESS": "${FUNDER_ADDRESS}",
+        "PRIVATE_KEY": "${PRIVATE_KEY}"
+      }
+    }
+  }
+}
+```
+
+### OpenClaw
+
+Add an `mcp.servers` entry to `~/.openclaw/openclaw.json` (JSON5; the gateway
+hot-reloads it). `${VAR}` reads from your environment, so keep keys out of the
+file:
+
+```json5
+{
+  mcp: {
+    servers: {
+      polygate: {
+        command: "uvx",
+        args: ["--from", "git+https://github.com/ilmari99/polygate@v0.2.0", "polygate-mcp"],
+        env: {
+          FUNDER_ADDRESS: "${FUNDER_ADDRESS}",
+          PRIVATE_KEY: "${PRIVATE_KEY}",
+        },
+      },
+    },
+  },
+}
+```
+
+PolyGate's tools then load under the `bundle-mcp` plugin id; allow them in
+`tools.*` policy if you restrict tools per agent.
+
+### Other hosts (Claude Desktop, Cursor, …)
+
+Most hosts use the standard `mcpServers` stdio shape:
+
+```json
+{
+  "mcpServers": {
+    "polygate": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.2.0", "polygate-mcp"],
+      "env": {
+        "FUNDER_ADDRESS": "0xYourFundingAddress",
+        "PRIVATE_KEY": "0xYourSignerPrivateKey"
+      }
+    }
+  }
+}
+```
+
+> Want the model to know *how to trade* before it starts? Hand it
+> [`llm.md`](llm.md) - an optional briefing on reading Polymarket via these tools
+> and keeping a persistent memory of what it learns.
 
 ### Environment
 

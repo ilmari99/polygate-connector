@@ -17,17 +17,13 @@ async def positions(
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Open positions for the configured wallet (Data API)."""
-    user = service.require_funder()
-    data = await service.data.positions(user, limit=limit)
-    return ResponseEnvelope.of(data, source="data")
+    return await service.positions(limit=limit)
 
 
 @router.get("/portfolio/value")
 async def value(service=Depends(get_service)) -> ResponseEnvelope:
     """Current portfolio value for the configured wallet (Data API)."""
-    user = service.require_funder()
-    data = await service.data.value(user)
-    return ResponseEnvelope.of(data, source="data")
+    return await service.portfolio_value()
 
 
 @router.get("/portfolio/balance")
@@ -36,8 +32,7 @@ async def balance(
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Collateral (USDC) or conditional-token balance & allowance (authenticated CLOB)."""
-    data = await service.trading().balance_allowance(conditional_token_id=token_id)
-    return ResponseEnvelope.of(data, source="clob")
+    return await service.balance(token_id=token_id)
 
 
 @router.get("/activity")
@@ -45,9 +40,7 @@ async def activity(
     limit: int = Query(default=100, ge=1, le=500),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
-    user = service.require_funder()
-    data = await service.data.activity(user, limit=limit)
-    return ResponseEnvelope.of(data, source="data")
+    return await service.activity(limit=limit)
 
 
 @router.get("/orders")
@@ -63,12 +56,10 @@ async def open_orders(
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Open orders for the configured wallet (authenticated CLOB)."""
-    data = await service.trading().open_orders(market=market, asset_id=asset_id)
-    return ResponseEnvelope.of(data, source="clob")
+    return await service.open_orders(market=market, asset_id=asset_id)
 
 
 @router.get("/trades")
 async def trades(service=Depends(get_service)) -> ResponseEnvelope:
     """Trade history for the configured wallet (authenticated CLOB)."""
-    data = await service.trading().trades()
-    return ResponseEnvelope.of(data, source="clob")
+    return await service.trades()

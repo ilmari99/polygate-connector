@@ -7,38 +7,43 @@ dry-run facade for the trading path, so nothing touches the network.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from polygate import mcp_server
 from polygate.config import get_settings
+from polygate.models.common import ResponseEnvelope
 from polygate.services.facade import PolymarketService
 
 
-class _FakeGamma:
+class _FakeService:
+    """Stands in for PolymarketService: the MCP tools call its operation methods.
+
+    Each method returns a :class:`ResponseEnvelope` exactly like the real facade,
+    so the tools' only remaining job - serializing it - is what gets exercised.
+    """
+
     async def list_markets(self, **params):
-        return [{"conditionId": "0x1", "clobTokenIds": "[\"111\", \"222\"]"}]
+        return ResponseEnvelope.of(
+            [{"conditionId": "0x1", "clobTokenIds": "[\"111\", \"222\"]"}], source="gamma"
+        )
 
-    async def get_market_by_slug(self, slug):
-        return [{"slug": slug}]
-
-    async def search(self, query, **params):
-        return {
-            "events": [
-                {
-                    "id": 7,
-                    "title": "Example event",
-                    "markets": [{"clobTokenIds": "[\"111\"]"}],
-                }
-            ]
-        }
+    async def search(self, q, **params):
+        # The facade does the flattening; here we return an already-flat envelope.
+        return ResponseEnvelope.of(
+            {
+                "events": [{"id": 7, "title": "Example event"}],
+                "markets": [
+                    {"clobTokenIds": "[\"111\"]", "event_id": 7, "event_title": "Example event"}
+                ],
+            },
+            source="gamma",
+        )
 
 
 @pytest.fixture
 def fake_service():
     previous = mcp_server._service
-    mcp_server._service = SimpleNamespace(gamma=_FakeGamma())
+    mcp_server._service = _FakeService()
     try:
         yield mcp_server._service
     finally:
@@ -59,7 +64,7 @@ async def test_list_markets_wraps_envelope(fake_service):
     assert result["data"][0]["conditionId"] == "0x1"
 
 
-async def test_search_flattens_markets(fake_service):
+async def test_search_serializes_flattened_envelope(fake_service):
     result = await mcp_server.search("example")
     assert result["source"] == "gamma"
     markets = result["data"]["markets"]
