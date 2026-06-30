@@ -19,6 +19,7 @@ dependencies = [
     "tenacity>=9.1",
     "eth-account>=0.13",
     "py-clob-client-v2==1.0.1",
+    "mcp>=1.27,<2",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,7 @@ dev = [
 
 [project.scripts]
 polygate = "polygate.main:run"
+polygate-mcp = "polygate.mcp_server:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -257,6 +257,58 @@ require `X-API-Key`; `GET /health` is always public.
 | POST   | `/orders/cancel-all`        | Cancel all open orders. |
 | POST   | `/orders/{order_id}/cancel` | Cancel one order.       |
 
+## Use as an MCP server (any AI app)
+
+PolyGate also ships an [MCP](https://modelcontextprotocol.io) server, so any
+MCP-capable host (Claude Desktop, VS Code, Cursor, your own agent, …) can use
+Polymarket directly - no HTTP server, port, or `PLATFORM_API_KEY` to manage. The
+host launches `polygate-mcp` over stdio and gets every gateway capability as MCP
+**tools** (markets, order book, prices, search, holders, positions, balance, and
+placing/cancelling orders).
+
+The server talks to the `PolymarketService` in-process, so it derives your CLOB
+credentials and detects your signature type fresh in memory at startup and never
+writes them to disk.
+
+### Configure your host
+
+Add PolyGate to your host's MCP config. With [uv](https://docs.astral.sh/uv/)
+installed, no cloning or install step is needed - `uvx` fetches and runs it:
+
+```json
+{
+  "mcpServers": {
+    "polygate": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.1.0", "polygate-mcp"],
+      "env": {
+        "FUNDER_ADDRESS": "0xYourFundingAddress",
+        "PRIVATE_KEY": "0xYourSignerPrivateKey"
+      }
+    }
+  }
+}
+```
+
+### Environment
+
+The server reads the same wallet credentials as the REST gateway:
+
+| Variable          | Required | Description                                              |
+| ----------------- | :------: | -------------------------------------------------------- |
+| `PRIVATE_KEY`     | for trading | Signer key. **Keep secret.** Provide via the host's `env`. |
+| `FUNDER_ADDRESS`  | for trading | The address that holds your funds and makes your orders. |
+| `DRY_RUN`         |    no    | `true` simulates orders without signing or sending them. |
+| `SIGNATURE_TYPE`, `CLOB_API_KEY`, … |   auto   | Derived/detected in memory at startup; set only to override. |
+
+Market-data and research tools (`list_markets`, `get_order_book`, `get_price`,
+`search`, `get_holders`, …) work **without a wallet**. Account and trading tools
+(`get_positions`, `get_balance`, `place_order`, `cancel_order`, …) require the
+two wallet values above. Use `DRY_RUN=true` to exercise `place_order` safely.
+
+> Stdio transport note: the server logs only to **stderr** and keeps stdout
+> reserved for the MCP protocol, as the spec requires.
+
 ## Development
 
 ```bash
