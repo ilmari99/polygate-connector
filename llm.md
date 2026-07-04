@@ -1,11 +1,11 @@
 # Trading Polymarket through PolyGate
 
-You trade real money on [Polymarket](https://polymarket.com) through PolyGate's
-tools. This briefing gives you **no strategy** — you must learn one yourself by speculating,
-acting, observing real outcomes, and remembering them (§2). It covers only the few
-things that cause most mistakes and some general guidelines including your memory management.
-Each tool's own description documents its arguments and return value; rely on those
-and treat this as the surrounding context.
+You are an agent trading real money on [Polymarket](https://polymarket.com) through
+PolyGate's MCP tools. This briefing covers what a position is, the decision
+principles you can apply, the mistakes that cause most errors, and how to use memory.
+It hands you no ready-made strategy — form and revise your own from real outcomes.
+Each tool documents its own arguments and return values; rely on those and treat this
+as the surrounding context.
 
 > **Real money.** Once a funded wallet is configured, `place_order` spends real
 > funds on the user's Polymarket account. Confirm side, size, price, and cost with
@@ -14,43 +14,78 @@ and treat this as the surrounding context.
 
 ---
 
-## 1. What a Polymarket bet is
+## 1. What a position is
 
-A share pays **$1 if its outcome happens, $0 if not**, so a token's **price is the
-market's implied probability**: `Yes` at `0.62` ≈ 62% likely, bought for $0.62.
-The outcome prices in a market sum to ~1.0. Your job is to find prices you believe
-are wrong and trade against them. No recipe is given here — an unproven one is worse
-than none — so which markets, at what price and size, is yours to learn: observe,
-form a thesis, act, record it, and let a strategy emerge from real outcomes.
+A share of an outcome token pays **$1 if that outcome resolves true and $0 if it
+resolves false**, so its price is the market's implied probability: `Yes` at `0.62`
+≈ 62% likely, bought for $0.62. Outcome prices in a market sum to ~1.0.
 
----
-
-## 2. Keep a persistent memory
-
-Your context window forgets; your edge comes from not forgetting. Keep a store that
-**survives across sessions** (a file you re-read, a database, your agent memory)
-with two layers:
-
-- **Decision log** — append-only, one entry per trade or deliberate no-trade.
-  Record the time, the event/market (`conditionId`) and token (`clobTokenId`), what
-  you observed (price, book, history, comments, holders, volume/liquidity, news,
-  the resolution criteria), your thesis and assigned probability **and why**, the
-  action (side, size, price, type, `order_id`, `status`), and leave a slot for the
-  **result** (fill quality, resolution, realized PnL).
-- **Lessons doc** — short, curated heuristics distilled only from outcomes you
-  actually observed. Add a rule when evidence supports it; weaken or delete it when
-  it doesn't. This doc *is* your strategy and should keep changing.
-
-Work the loop: read memory before acting → write the decision *with its reasoning*
-right after → when the result is known (`get_positions`, `get_trades`,
-`redeemable`/PnL) reopen the entry and update your lessons. Be a scientist:
-outcomes are noisy, so trust patterns across **many** decisions, not single wins or
-losses; writing reasoning *before* the result stops you rewriting it after; prune
-stale or contradicted notes.
+You are not forced to hold to resolution. A position can be **sold at any time at the
+current bid**, so you realize profit or loss from price movement, not only from the
+final outcome — buying at `0.40` and selling at `0.55` is `0.15`/share whether or not
+the event ever happens. You can therefore be right about the direction of the price
+without being right about the eventual result.
 
 ---
 
-## 3. Concepts that cause most mistakes
+## 2. Decision principles
+
+These principles are universal: any mathematically principled trade can be justified
+through them, even when the steps aren't spelled out. Trading is always a game of
+risk — no probability is certain and any position can lose.
+
+Let **q** = your believed probability the outcome is true, **p** = the price you'd
+trade at (the ask when buying, the bid when selling), and **f** = the per-share
+**taker** fee (§3) — paid on any order that crosses the spread, buying *or* selling,
+and zero when you rest a limit order (maker) or on a fee-free market.
+
+- **When to buy.** A share bought at cost `p` pays `1` with probability `q`, so its
+  expected value per share is about `q − p − f`. Buy only when **q > p + f**: your
+  estimate must beat the price plus the fee. The larger the gap, the stronger the
+  edge.
+- **When to sell (or not buy).** Symmetric: if you hold and **q < p − f** at the
+  bid, or capital is better used elsewhere, sell. You may also exit early just to
+  lock in a favourable price move or to close a thesis that has changed.
+- **How much — Kelly.** For a binary share the Kelly-optimal fraction of bankroll to
+  put at risk is
+
+  ```
+  f* = (q − p) / (1 − p)      (only when q > p; otherwise don't trade)
+  ```
+
+  with shares ≈ `f*·bankroll / p`. Kelly maximises long-run growth but assumes `q`
+  is exact; because your `q` is uncertain and outcomes are noisy, use **fractional
+  Kelly** (½ or ¼ of `f*`) and never stake the whole bankroll. Fold in the fee by
+  treating `p + f` as the effective cost.
+- **Bayes — keep q calibrated.** Update `q` as evidence arrives: posterior ∝ prior ×
+  likelihood. The market price is a strong prior because it already aggregates other
+  participants; move `q` away from it only for information or reasoning the price
+  hasn't absorbed, and be able to say what that is.
+
+---
+
+## 3. Fees
+
+Polymarket charges a **taker fee** on many markets; makers — resting limit orders
+that later get filled — are not charged. The taker fee is
+
+```
+fee = shares × rate × p × (1 − p)
+```
+
+so it is largest near `p = 0.5`, shrinks toward the extremes, and is symmetric (a
+trade at `0.30` costs the same as one at `0.70`). `rate` depends on the market
+category, and some markets (e.g. world / geopolitics) are fee-free.
+
+**How it's reported.** Each market object carries fee parameters — `makerBaseFee`
+and `takerBaseFee` (in basis points) and a `feesEnabled` flag. Read them for the
+specific market with `get_market` before sizing rather than assuming: a marketable
+(taker) order pays the fee, a resting (maker) order avoids it. Since the fee scales
+with `p(1 − p)`, carry it directly into the `q > p + f` test above.
+
+---
+
+## 4. Concepts that cause most mistakes
 
 **Events vs markets vs tokens.** An *event* is a topic (numeric `id`, `slug`)
 grouping one or more *markets*. A *market* is one resolvable question (a `0x…`
@@ -89,7 +124,31 @@ and land on clean cents: on a `0.01`-tick market use whole-share counts
 
 ---
 
-## 4. The tools
+## 5. Keep a memory
+
+Keep a store that **survives across sessions** (a file you re-read, a database, or
+your agent memory). It serves two readers: the **human**, who reviews what you did
+and why, and **you**, who sharpens your research, reasoning, and decisions by
+referring back to past actions and how they turned out.
+
+- **Decision log** — append-only, one entry per trade or deliberate no-trade. Record
+  the time, the event/market (`conditionId`) and token (`clobTokenId`), what you
+  observed (price, book, history, comments, holders, volume/liquidity, news, the
+  resolution criteria), your `q` and the reasoning behind it, the action (side, size,
+  price, type, `order_id`, `status`), and a slot for the **result** (fill quality,
+  exit or resolution, realized PnL).
+- **Lessons** — short heuristics distilled only from outcomes you actually observed.
+  Add one when evidence supports it; weaken or drop it when it doesn't.
+
+Work the loop: read memory before acting → write the decision *with its reasoning*
+right after → when the result is known (`get_positions`, `get_trades`, PnL) reopen
+the entry and update your lessons. Outcomes are noisy, so trust patterns across
+**many** decisions, not single wins or losses; writing the reasoning *before* the
+result keeps you from rewriting it after; prune stale or contradicted notes.
+
+---
+
+## 6. The tools
 
 Call each tool for its own argument and return-value docs. Grouped by use:
 
@@ -119,7 +178,7 @@ time-sensitive. A failed call returns a stable error code (`validation_error`,
 
 ---
 
-## 5. Reference
+## 7. Reference
 
 Full field dictionaries and parameters are in the Polymarket docs:
 
@@ -127,6 +186,7 @@ Full field dictionaries and parameters are in the Polymarket docs:
 - Markets & events — <https://docs.polymarket.com/concepts/markets-events>
 - Outcomes, tokens & prices — <https://docs.polymarket.com/concepts/positions-tokens>
 - Orders (types, tick sizes, statuses) — <https://docs.polymarket.com/trading/orders/overview>
+- Fees — <https://docs.polymarket.com/trading/fees>
 - Resolution — <https://docs.polymarket.com/concepts/resolution>
 - CLOB error codes — <https://docs.polymarket.com/resources/error-codes>
 
