@@ -2,9 +2,13 @@
 
 **Trade [Polymarket](https://polymarket.com) from any LLM that speaks MCP.**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+![MCP](https://img.shields.io/badge/MCP-compatible-6E56CF.svg)
+
 PolyGate is a [Model Context Protocol](https://modelcontextprotocol.io) server
 that gives your AI agent Polymarket as a set of tools. Point any MCP-capable host
-(Claude Desktop, Claude Code, VS Code, Cursor, Openclaw, …) at it,
+(Claude Desktop, Claude Code, VS Code, Cursor, OpenClaw, …) at it,
 and your agent can:
 
 - **research markets** — search, list, and read events, markets, and resolution rules;
