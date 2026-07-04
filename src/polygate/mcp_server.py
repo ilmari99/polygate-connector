@@ -33,6 +33,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.resources import files
 from typing import Any
 
 from . import __version__
@@ -148,21 +149,53 @@ except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
     ) from exc
 
 
+def _load_trading_guide() -> str:
+    """Read the packaged full trading briefing (``llm.md``)."""
+    return files("polygate").joinpath("llm.md").read_text(encoding="utf-8")
+
+
+# Condensed always-on briefing delivered to the host via the MCP ``instructions``
+# field (the one channel most hosts inject automatically). It covers only the
+# platform/API fundamentals; the full trading guide (strategy, memory, tool
+# catalogue) is served on demand by the ``polygate://trading-guide`` resource below.
+INSTRUCTIONS = """\
+PolyGate exposes Polymarket prediction markets to MCP hosts as tools. This covers the
+platform fundamentals; the full trading guide is served as the `polygate://trading-guide`
+resource.
+
+REAL money. Once a funded wallet is configured, `place_order` spends real funds on the
+user's account. Confirm side, size, price, and cost with the user before ordering,
+unless told to trade autonomously.
+
+Positions. A share pays $1 if its outcome resolves true and $0 if false, so its price is
+the market's implied probability (Yes at 0.62 = 62%). You need not hold to resolution:
+sell any time at the current bid.
+
+Ids. event id -> `get_comments`; conditionId (0x...) -> `get_market`, `get_holders`;
+clobTokenId -> the book/price/order/trade tools. Prices and orders are ALWAYS per outcome
+token, never per market. `outcomes`, `outcomePrices`, `clobTokenIds` are index-aligned.
+
+The `side` footgun. `get_price(token, side)` returns the best price on THAT side of the
+book: to buy you pay the ask (query side=SELL); to sell you get the bid (query side=BUY).
+Use `get_midpoint` for fair value.
+
+Tradeable only when `active` is true and `closed` is false, `acceptingOrders` and
+`enableOrderBook` are true, and `endDate` is in the future (re-check on the object).
+
+Fees. Only takers (spread-crossing orders) pay: fee = shares * rate * p * (1 - p),
+largest near p = 0.5; makers pay nothing and some markets are fee-free. Check a market's
+`makerBaseFee`/`takerBaseFee`/`feesEnabled`.
+
+Numbers. CLOB values (price, midpoint, spread, book) are strings - coerce before math.
+`get_balance` is a raw 6-decimal integer string (divide by 1,000,000 for USDC); portfolio
+and position dollar fields are already dollars. A marketable order must be worth >= $1.00
+(`size * price`) and land on clean cents (whole shares on a 0.01-tick market).
+"""
+
+
 mcp = FastMCP(
     "polygate",
-    instructions=(
-        "PolyGate exposes Polymarket prediction markets to MCP hosts. Discover "
-        "markets with `search` or `list_markets`; read live prices with "
-        "`get_order_book`, `get_price`, `get_midpoint`; inspect the account with "
-        "`get_positions`, `get_portfolio_value`, `get_balance`; and trade with "
-        "`place_order` / `cancel_order`. Prices and orders are always per outcome "
-        "token (`clobTokenId`), never per market. Trades use REAL money once a "
-        "funded wallet is configured - confirm side, size, price and cost with "
-        "the user before calling `place_order`. The `get_price` side argument "
-        "returns the best price on that side of the book: to BUY query side=SELL "
-        "(the ask), to SELL query side=BUY (the bid); use `get_midpoint` for fair "
-        "value."
-    ),
+    instructions=INSTRUCTIONS,
     lifespan=_lifespan,
 )
 
@@ -188,6 +221,15 @@ async def health() -> dict[str, Any]:
 async def config() -> dict[str, Any]:
     """Secret-free summary of the active configuration (mode, wallet, hosts)."""
     return get_settings().public_summary()
+
+
+@mcp.resource("polygate://trading-guide", mime_type="text/markdown")
+def trading_guide() -> str:
+    """Full PolyGate trading briefing (llm.md): what a position is, the decision
+    principles (q vs p, Kelly, Bayes, fees), common footguns, the tool catalogue,
+    and memory discipline. The server `instructions` are a condensed version of this.
+    """
+    return _load_trading_guide()
 
 
 # --------------------------------------------------------------------------- #

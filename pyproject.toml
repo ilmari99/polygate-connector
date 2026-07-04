@@ -36,6 +36,9 @@ polygate-mcp = "polygate.mcp_server:run"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+polygate = ["llm.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
