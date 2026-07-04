@@ -207,11 +207,12 @@ async def list_markets(
 ) -> dict[str, Any]:
     """List markets (Gamma). Pass `slug` to fetch one market by its slug.
 
-    Each market carries a `conditionId` and a `clobTokenIds` array (the Yes/No
-    outcome token ids you trade on); `outcomes` and `outcomePrices` are arrays
-    too. A `limit` over 100 is paged automatically past Gamma's per-page cap.
-    Set `compact=True` to drop low-signal fields (descriptions, images, AMM
-    internals) and shrink the payload.
+    Each market carries a `conditionId` and index-aligned `outcomes`,
+    `outcomePrices` (each price is the implied probability), and `clobTokenIds`
+    (the Yes/No token ids you trade on). Sort with `order` (e.g. 'volume24hr',
+    'liquidity') plus `ascending`; a `limit` over 100 is paged automatically past
+    Gamma's 100-row cap. Set `compact=True` to drop low-signal fields
+    (descriptions, images, AMM internals) and shrink the payload.
     """
     return await _serialize(
         _require_service().list_markets(
@@ -232,7 +233,11 @@ async def list_markets(
 async def get_market(condition_id: str, compact: bool = False) -> dict[str, Any]:
     """Fetch a single market by its `conditionId` (0x...).
 
-    Set `compact=True` to drop low-signal fields.
+    The full object to read before trading: `description`/`resolutionSource` (the
+    exact resolution criteria), the tradeable flags (`active`, `closed`,
+    `acceptingOrders`, `enableOrderBook`), `endDate`, and the fee params
+    (`makerBaseFee`/`takerBaseFee` in basis points, `feesEnabled`). Set
+    `compact=True` to drop low-signal fields.
     """
     return await _serialize(_require_service().get_market(condition_id, compact=compact))
 
@@ -306,7 +311,7 @@ async def get_spread(token_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_last_trade_price(token_id: str) -> dict[str, Any]:
-    """Last traded price for an outcome token."""
+    """Last traded price for an outcome token - live CLOB, more current than Gamma's cached `bestBid`/`bestAsk`."""
     return await _serialize(_require_service().last_trade_price(token_id))
 
 
@@ -392,7 +397,11 @@ async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 @mcp.tool()
 async def get_positions(limit: int = 100) -> dict[str, Any]:
-    """Open positions for the configured wallet. Requires a wallet."""
+    """Open positions for the configured wallet. Requires a wallet.
+
+    Eventually consistent: right after a fill it may lag, so re-poll rather than
+    trust an empty result.
+    """
     return await _serialize(_require_service().positions(limit=limit))
 
 
@@ -465,8 +474,11 @@ async def place_order(
         tick_size: Market tick size, e.g. '0.01'. Auto-detected if omitted.
         neg_risk: Whether this is a neg-risk market. Auto-detected if omitted.
 
-    For an instant taker fill: to buy set price >= best ask; to sell set
-    price <= best bid.
+    For an instant taker fill, cross the book: to buy set price >= best ask, to
+    sell set price <= best bid - takers pay a fee, makers don't. A marketable
+    order must be worth >= $1.00 (`size * price`) and land on clean cents (on a
+    0.01-tick market use whole-share counts). The result carries `order_id` and
+    `status` ('live' or 'matched').
     """
     try:
         req = PlaceOrderRequest(
