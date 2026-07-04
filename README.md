@@ -12,9 +12,11 @@ and your agent can:
 - **inspect your account** — positions, balance, portfolio value, orders, activity;
 - **trade** — buy, sell, and manage real orders on your own Polymarket account.
 
-It uses **your** Polymarket account. You supply two values (your funding address
-and signer key); PolyGate signs orders, derives credentials, and detects 
-signature type for you — all in memory at startup. There's no HTTP
+It uses **your** Polymarket account. Researching and reading markets needs no
+credentials — run it key-free to explore. To let the agent **trade**, you supply
+two values (your funding address and signer key); PolyGate then signs orders,
+derives credentials, and detects your signature type for you — all in memory at
+startup. There's no HTTP
 server to run, no port to open, and no API key for the agent to manage. All your trades
 will also be visible on Polymarket.com, and you can use the site to manage your account as usual.
 
@@ -23,16 +25,65 @@ will also be visible on Polymarket.com, and you can use the site to manage your 
 
 ## Quick start
 
-You need two things:
+The only requirement is **[uv](https://docs.astral.sh/uv/)**. Install it for your
+platform:
 
-1. **[uv](https://docs.astral.sh/uv/)** — install with
-   `curl -LsSf https://astral.sh/uv/install.sh | sh`. That's the only dependency;
-   `uvx` fetches and runs PolyGate on demand, no clone or `pip install` needed.
-2. **Two values from your Polymarket account** (on [polymarket.com](https://polymarket.com)):
-   - **Funder address** — Settings → Profile → Address (`0x…`).
-   - **Private key** — Settings → Account → Private Key. **Keep it secret.**
+<details open>
+<summary><b>macOS</b></summary>
 
-Then paste this into your MCP host's config, filling in the two values:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Or with [Homebrew](https://brew.sh): `brew install uv`.
+</details>
+
+<details>
+<summary><b>Linux</b></summary>
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+</details>
+
+<details>
+<summary><b>Windows</b></summary>
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Or with [winget](https://learn.microsoft.com/windows/package-manager/):
+`winget install --id=astral-sh.uv -e`.
+</details>
+
+`uvx` (bundled with uv) then fetches and runs PolyGate on demand, with no clone or
+`pip install`.
+
+To **research and read** markets — no Polymarket account or keys needed — paste
+this into your MCP host's config:
+
+```json
+{
+  "mcpServers": {
+    "polygate": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.2.0", "polygate-mcp"]
+    }
+  }
+}
+```
+
+Reload your host and the market-data, price, and research tools appear.
+
+### Add your wallet to trade
+
+Credentials are needed **only for trading**. To let the agent place and cancel
+orders on **your** Polymarket account, add an `env` block with two values from
+[polymarket.com](https://polymarket.com):
+
+- **Funder address** — Settings → Profile → Address (`0x…`).
+- **Private key** — Settings → Account → Private Key. **Keep it secret.**
 
 ```json
 {
@@ -49,12 +100,8 @@ Then paste this into your MCP host's config, filling in the two values:
 }
 ```
 
-That's it — reload your host and the PolyGate tools appear.
-
-The two values go in the **`env` block** above: environment variables your host
-passes to the PolyGate process when it launches it. The one thing to
-avoid is committing a config file that contains your key to a shared or public
-repository.
+These are environment variables your host passes to the PolyGate process; they
+stay in a local config file on your machine.
 
 This `mcpServers` shape is the de-facto standard and works in Claude Desktop,
 Claude Code, Cursor, and most MCP hosts. **VS Code is the exception** — see
