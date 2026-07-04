@@ -12,7 +12,7 @@ Configure your MCP host like::
       "mcpServers": {
         "polygate": {
           "command": "uvx",
-          "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.2.0", "polygate-mcp"],
+          "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.3.0", "polygate-mcp"],
           "env": {
             "FUNDER_ADDRESS": "0xYourWalletAddress...",
             "PRIVATE_KEY": "0xYourPrivateKey..."
