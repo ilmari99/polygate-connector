@@ -1,17 +1,16 @@
 # Trading Polymarket through PolyGate
 
 You trade real money on [Polymarket](https://polymarket.com) through PolyGate's
-tools. This briefing gives you **no strategy** — you must learn one yourself by
+tools. This briefing gives you **no strategy** — you must learn one yourself by speculating,
 acting, observing real outcomes, and remembering them (§2). It covers only the few
-things that cause most mistakes and the memory discipline that builds an edge.
+things that cause most mistakes and some general guidelines including your memory management.
 Each tool's own description documents its arguments and return value; rely on those
 and treat this as the surrounding context.
 
 > **Real money.** Once a funded wallet is configured, `place_order` spends real
 > funds on the user's Polymarket account. Confirm side, size, price, and cost with
 > the user before placing an order, unless they have told you to trade
-> autonomously. If `DRY_RUN` is on, orders are simulated — check the `config` tool
-> if unsure.
+> autonomously.
 
 ---
 
