@@ -72,7 +72,7 @@ this into your MCP host's config:
   "mcpServers": {
     "polygate": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.3.0", "polygate-mcp"]
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"]
     }
   }
 }
@@ -94,7 +94,7 @@ orders on **your** Polymarket account, add an `env` block with two values from
   "mcpServers": {
     "polygate": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.3.0", "polygate-mcp"],
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"],
       "env": {
         "FUNDER_ADDRESS": "0xYourFundingAddress",
         "PRIVATE_KEY": "0xYourSignerPrivateKey"
@@ -222,7 +222,7 @@ Put this in `.vscode/mcp.json`, then reload the window:
     "polygate": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.3.0", "polygate-mcp"],
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"],
       "env": {
         "FUNDER_ADDRESS": "0xYourFundingAddress",
         "PRIVATE_KEY": "0xYourSignerPrivateKey"
