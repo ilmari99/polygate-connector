@@ -55,11 +55,15 @@ _COMPACT_MARKET_FIELDS = frozenset(
         # Added by search flattening so callers keep parent context.
         "event_id",
         "event_title",
+        "event_slug",
     }
 )
 
 # High-signal event fields kept in compact mode. ``markets`` is always kept and
-# its entries are compacted recursively.
+# its entries are compacted recursively. The grouping keys (``series``,
+# ``seriesSlug``, ``gameId``, ``tags``, ``negRiskMarketID``) are kept too: they
+# are how a caller navigates to the sibling events Polymarket splits a topic
+# across, so dropping them would hide the discovery path.
 _COMPACT_EVENT_FIELDS = frozenset(
     {
         "id",
@@ -73,6 +77,28 @@ _COMPACT_EVENT_FIELDS = frozenset(
         "liquidity",
         "volume",
         "markets",
+        "series",
+        "seriesSlug",
+        "gameId",
+        "tags",
+        "negRiskMarketID",
+    }
+)
+
+# High-signal series fields kept in compact mode.
+_COMPACT_SERIES_FIELDS = frozenset(
+    {
+        "id",
+        "ticker",
+        "slug",
+        "title",
+        "seriesType",
+        "recurrence",
+        "active",
+        "closed",
+        "startDate",
+        "volume24hr",
+        "event_count",
     }
 )
 
@@ -126,6 +152,32 @@ def clean_events(data: Any, *, compact: bool = False) -> Any:
     return data
 
 
+def clean_series(series: Any, *, compact: bool = False) -> Any:
+    """Clean a series object for the catalog listing.
+
+    A series embeds its full ``events`` list, which is heavy; it is replaced with
+    an ``event_count`` so the listing stays a lightweight index. Drill into a
+    series' events with ``list_events(series_id=...)``.
+    """
+    if not isinstance(series, dict):
+        return series
+    out = dict(series)
+    events = out.get("events")
+    if isinstance(events, list):
+        out["event_count"] = len(events)
+    out.pop("events", None)
+    if compact:
+        out = {k: v for k, v in out.items() if k in _COMPACT_SERIES_FIELDS}
+    return out
+
+
+def clean_series_list(data: Any, *, compact: bool = False) -> Any:
+    """Clean a Gamma ``/series`` response (a JSON array of series dicts)."""
+    if isinstance(data, list):
+        return [clean_series(s, compact=compact) for s in data]
+    return data
+
+
 def clean_search(data: Any, *, compact: bool = False) -> Any:
     """Clean a flattened search payload (``events`` plus a flat ``markets``)."""
     if not isinstance(data, dict):
@@ -135,4 +187,47 @@ def clean_search(data: Any, *, compact: bool = False) -> Any:
         out["events"] = [clean_event(e, compact=compact) for e in out["events"]]
     if isinstance(out.get("markets"), list):
         out["markets"] = [clean_market(m, compact=compact) for m in out["markets"]]
+    return out
+
+
+def summarize_order_book(book: Any) -> Any:
+    """Attach a derived ``summary`` (best bid/ask, midpoint, spread) to a book.
+
+    The CLOB ``/book`` response ships raw ``bids``/``asks`` arrays that are not
+    guaranteed sorted, so a caller otherwise has to scan them to find the best
+    bid (max price) and best ask (min price). We compute those once here - plus
+    the midpoint and spread - so the agent reads them directly instead of parsing
+    the ladder (and needing a separate price/spread/midpoint tool). Prices are
+    coerced to floats; ``size`` at the top of book is carried through as-is. Empty
+    or missing sides yield ``None`` fields.
+    """
+    if not isinstance(book, dict):
+        return book
+
+    def _levels(side: Any) -> list[tuple[float, Any]]:
+        out: list[tuple[float, Any]] = []
+        for lvl in side or []:
+            if not isinstance(lvl, dict):
+                continue
+            try:
+                out.append((float(lvl.get("price")), lvl.get("size")))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    bids = _levels(book.get("bids"))
+    asks = _levels(book.get("asks"))
+    best_bid = max(bids, key=lambda x: x[0]) if bids else (None, None)
+    best_ask = min(asks, key=lambda x: x[0]) if asks else (None, None)
+    bid_p, ask_p = best_bid[0], best_ask[0]
+    both = bid_p is not None and ask_p is not None
+    out = dict(book)
+    out["summary"] = {
+        "best_bid": bid_p,
+        "best_bid_size": best_bid[1],
+        "best_ask": ask_p,
+        "best_ask_size": best_ask[1],
+        "midpoint": round((bid_p + ask_p) / 2, 6) if both else None,
+        "spread": round(ask_p - bid_p, 6) if both else None,
+    }
     return out

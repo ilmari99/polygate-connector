@@ -65,6 +65,10 @@ async def list_events(
     active: bool | None = Query(default=True),
     closed: bool | None = Query(default=False),
     tag_id: int | None = None,
+    series_id: int | None = Query(
+        default=None,
+        description="Narrow to one series (a recurring/multi-part group of events).",
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -83,9 +87,69 @@ async def list_events(
         active=active,
         closed=closed,
         tag_id=tag_id,
+        series_id=series_id,
         limit=limit,
         offset=offset,
         order=order,
+        compact=compact,
+    )
+
+
+@events_router.get("/events/{key}")
+async def get_event(
+    key: str,
+    compact: bool = Query(default=False, description="Drop low-signal fields."),
+    service=Depends(get_service),
+) -> ResponseEnvelope:
+    """Fetch a single event (with its nested markets) by slug or event id."""
+    return await service.get_event(key, compact=compact)
+
+
+# --- Series (the recurring/multi-part grouping of events) ---
+@events_router.get("/series")
+async def list_series(
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    compact: bool = Query(default=False, description="Drop low-signal fields."),
+    service=Depends(get_service),
+) -> ResponseEnvelope:
+    """Catalog of series; each carries an ``event_count`` (drill in with list_events?series_id=)."""
+    return await service.list_series(limit=limit, offset=offset, compact=compact)
+
+
+# --- Flatten: every atomic market under one grouping node ---
+@events_router.get("/collect-markets")
+async def collect_markets(
+    series_id: int | None = Query(default=None, description="Flatten this series' markets."),
+    tag_id: int | None = Query(default=None, description="Flatten this category's markets."),
+    event: str | None = Query(
+        default=None, description="Event slug or id; with group_by, expands to its group."
+    ),
+    group_by: str | None = Query(
+        default=None,
+        description="Event attribute (e.g. 'gameId') to narrow an event's series by.",
+    ),
+    active: bool | None = Query(default=True),
+    closed: bool | None = Query(default=False),
+    compact: bool = Query(default=False, description="Drop low-signal fields."),
+    service=Depends(get_service),
+) -> ResponseEnvelope:
+    """Flatten every atomic market under one scope (series, tag, or event) into a list.
+
+    Pass exactly one of ``series_id``, ``tag_id``, or ``event``. Each returned
+    market is tagged with its parent ``event_id``/``event_title``/``event_slug``
+    and carries its ``conditionId`` and ``clobTokenIds``. This is how you gather
+    markets Polymarket buries across sibling events (e.g. a sports fixture:
+    ``event=<fixture-slug>&group_by=gameId``). The scan runs to completion and
+    fails loud if the scope is too broad - never silently partial.
+    """
+    return await service.collect_markets(
+        series_id=series_id,
+        tag_id=tag_id,
+        event=event,
+        group_by=group_by,
+        active=active,
+        closed=closed,
         compact=compact,
     )
 
@@ -99,25 +163,6 @@ async def list_tags(service=Depends(get_service)) -> ResponseEnvelope:
 @book_router.get("/orderbook/{token_id}")
 async def order_book(token_id: str, service=Depends(get_service)) -> ResponseEnvelope:
     return await service.order_book(token_id)
-
-
-@book_router.get("/price/{token_id}")
-async def price(
-    token_id: str,
-    side: str = Query(default="BUY", pattern="^(?i)(BUY|SELL)$"),
-    service=Depends(get_service),
-) -> ResponseEnvelope:
-    return await service.price(token_id, side)
-
-
-@book_router.get("/midpoint/{token_id}")
-async def midpoint(token_id: str, service=Depends(get_service)) -> ResponseEnvelope:
-    return await service.midpoint(token_id)
-
-
-@book_router.get("/spread/{token_id}")
-async def spread(token_id: str, service=Depends(get_service)) -> ResponseEnvelope:
-    return await service.spread(token_id)
 
 
 @book_router.get("/last-trade-price/{token_id}")

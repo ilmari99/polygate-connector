@@ -8,6 +8,8 @@ from polygate.services.transform import (
     clean_market,
     clean_markets,
     clean_search,
+    clean_series,
+    clean_series_list,
 )
 
 
@@ -85,3 +87,46 @@ def test_clean_search_cleans_events_and_flat_markets():
     assert out["markets"][0]["clobTokenIds"] == ["111", "222"]
     assert "description" not in out["markets"][0]
     assert out["events"][0]["markets"][0]["outcomes"] == ["Yes", "No"]
+
+
+def test_clean_event_compact_keeps_grouping_keys():
+    # Compact must retain the keys used to navigate to sibling events, while
+    # still dropping genuine noise.
+    event = {
+        "id": "e1",
+        "title": "Brazil vs. Norway",
+        "description": "noise",
+        "image": "https://example.com/i.png",
+        "series": [{"id": "11433"}],
+        "seriesSlug": "soccer-fifwc",
+        "gameId": 90086997,
+        "tags": [{"id": "1", "slug": "sports"}],
+        "negRiskMarketID": "0xabc",
+        "markets": [_raw_market()],
+    }
+    out = clean_event(event, compact=True)
+    assert out["series"] == [{"id": "11433"}]
+    assert out["seriesSlug"] == "soccer-fifwc"
+    assert out["gameId"] == 90086997
+    assert out["tags"] == [{"id": "1", "slug": "sports"}]
+    assert out["negRiskMarketID"] == "0xabc"
+    assert "description" not in out and "image" not in out
+
+
+def test_clean_series_list_drops_events_for_count():
+    raw = [{"id": "35", "slug": "fomc", "title": "FOMC",
+            "description": "noise", "events": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}]
+    out = clean_series_list(raw)
+    assert out[0]["event_count"] == 3
+    assert "events" not in out[0]
+    # Full (non-compact) view keeps other metadata.
+    assert out[0]["title"] == "FOMC"
+
+
+def test_clean_series_compact_projects_allowlist():
+    raw = {"id": "35", "slug": "fomc", "title": "FOMC", "recurrence": "monthly",
+           "description": "noise", "events": [{"id": "a"}]}
+    out = clean_series(raw, compact=True)
+    assert out["event_count"] == 1
+    assert out["recurrence"] == "monthly"
+    assert "description" not in out

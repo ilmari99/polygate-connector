@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import polygate.onboarding as onboarding
-from polygate.config import get_settings
 from polygate.main import create_app
 
 # A throwaway, well-formed (but unfunded/fake) wallet purely for format checks.

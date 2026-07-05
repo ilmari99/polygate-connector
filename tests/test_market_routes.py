@@ -75,6 +75,133 @@ def test_list_markets_decodes_and_compacts(auth_headers):
 
 
 @respx.mock
+def test_get_event_by_slug(auth_headers):
+    route = respx.get("https://gamma-api.polymarket.com/events").mock(
+        return_value=httpx.Response(
+            200, json=[{"id": "654615", "slug": "fifwc-bra-nor", "gameId": 90086997}]
+        )
+    )
+    with TestClient(create_app()) as client:
+        resp = client.get("/events/fifwc-bra-nor", headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert route.calls.last.request.url.params["slug"] == "fifwc-bra-nor"
+        assert body["data"]["gameId"] == 90086997
+
+
+@respx.mock
+def test_get_event_unknown_is_not_found(auth_headers):
+    respx.get("https://gamma-api.polymarket.com/events").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    with TestClient(create_app()) as client:
+        resp = client.get("/events/nope", headers=auth_headers)
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "not_found"
+
+
+@respx.mock
+def test_list_events_by_series_id(auth_headers):
+    route = respx.get("https://gamma-api.polymarket.com/events").mock(
+        return_value=httpx.Response(200, json=[{"id": "1", "slug": "fed-oct"}])
+    )
+    with TestClient(create_app()) as client:
+        resp = client.get("/events", params={"series_id": 35}, headers=auth_headers)
+        assert resp.status_code == 200
+        assert route.calls.last.request.url.params["series_id"] == "35"
+
+
+@respx.mock
+def test_list_series_is_lightweight_catalog(auth_headers):
+    # The heavy embedded events[] is replaced with an event_count.
+    respx.get("https://gamma-api.polymarket.com/series").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"id": "35", "slug": "fomc", "events": [{"id": "a"}, {"id": "b"}]}],
+        )
+    )
+    with TestClient(create_app()) as client:
+        body = client.get("/series", headers=auth_headers).json()
+        s = body["data"][0]
+        assert s["slug"] == "fomc"
+        assert s["event_count"] == 2
+        assert "events" not in s
+
+
+@respx.mock
+def test_collect_markets_flattens_a_series(auth_headers):
+    respx.get("https://gamma-api.polymarket.com/events").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": "e1", "slug": "oct", "title": "Oct",
+                 "markets": [{"id": "m1", "clobTokenIds": "[\"1\",\"2\"]"}]},
+                {"id": "e2", "slug": "sep", "title": "Sep",
+                 "markets": [{"id": "m2"}, {"id": "m3"}]},
+            ],
+        )
+    )
+    with TestClient(create_app()) as client:
+        body = client.get(
+            "/collect-markets", params={"series_id": 35}, headers=auth_headers
+        ).json()
+        data = body["data"]
+        assert data["scope"] == {"series_id": 35}
+        assert data["event_count"] == 2
+        assert data["market_count"] == 3
+        flat = {m["id"]: m for m in data["markets"]}
+        assert flat["m1"]["event_slug"] == "oct"
+        assert flat["m1"]["clobTokenIds"] == ["1", "2"]
+
+
+@respx.mock
+def test_collect_markets_event_expands_by_gameid(auth_headers):
+    anchor = {
+        "id": "654615", "slug": "fifwc-bra-nor", "title": "Brazil vs. Norway",
+        "gameId": 90086997, "series": [{"id": "11433"}],
+        "markets": [{"id": "m-money"}],
+    }
+    series_scan = [
+        anchor,
+        {"id": "654708", "slug": "fifwc-bra-nor-more", "title": "More",
+         "gameId": 90086997, "markets": [{"id": "m-ou"}]},
+        {"id": "999", "slug": "other", "gameId": 12345, "markets": [{"id": "x"}]},
+    ]
+    route = respx.get("https://gamma-api.polymarket.com/events").mock(
+        side_effect=[
+            httpx.Response(200, json=[anchor]),      # _resolve_event
+            httpx.Response(200, json=series_scan),   # _scan_events(series_id=11433)
+        ]
+    )
+    with TestClient(create_app()) as client:
+        body = client.get(
+            "/collect-markets",
+            params={"event": "fifwc-bra-nor", "group_by": "gameId"},
+            headers=auth_headers,
+        ).json()
+        data = body["data"]
+        assert route.calls[0].request.url.params["slug"] == "fifwc-bra-nor"
+        assert route.calls[1].request.url.params["series_id"] == "11433"
+        # Only the two matching-gameId events; the other fixture dropped.
+        assert data["event_count"] == 2
+        assert {m["id"] for m in data["markets"]} == {"m-money", "m-ou"}
+        assert data["scope"]["group_by"] == "gameId"
+        assert data["scope"]["match_value"] == 90086997
+
+
+def test_collect_markets_requires_exactly_one_scope(auth_headers):
+    with TestClient(create_app()) as client:
+        # zero scopes
+        r0 = client.get("/collect-markets", headers=auth_headers)
+        assert r0.status_code == 422 and r0.json()["error"] == "validation_error"
+        # two scopes
+        r2 = client.get(
+            "/collect-markets", params={"series_id": 1, "tag_id": 2}, headers=auth_headers
+        )
+        assert r2.status_code == 422 and r2.json()["error"] == "validation_error"
+
+
+@respx.mock
 def test_orderbook_routes_to_clob(auth_headers):
     respx.get("https://clob.polymarket.com/book").mock(
         return_value=httpx.Response(200, json={"bids": [], "asks": [], "tick_size": "0.01"})
@@ -85,6 +212,29 @@ def test_orderbook_routes_to_clob(auth_headers):
         body = resp.json()
         assert body["source"] == "clob"
         assert body["data"]["tick_size"] == "0.01"
+        # Empty book -> summary present with null fields.
+        assert body["data"]["summary"]["best_bid"] is None
+
+
+@respx.mock
+def test_orderbook_summary_computes_best_and_spread(auth_headers):
+    # Unsorted ladders: best bid is the max bid, best ask is the min ask.
+    respx.get("https://clob.polymarket.com/book").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "tick_size": "0.01",
+                "bids": [{"price": "0.48", "size": "10"}, {"price": "0.50", "size": "7"}],
+                "asks": [{"price": "0.55", "size": "9"}, {"price": "0.51", "size": "3"}],
+            },
+        )
+    )
+    with TestClient(create_app()) as client:
+        s = client.get("/orderbook/12345", headers=auth_headers).json()["data"]["summary"]
+        assert s["best_bid"] == 0.50 and s["best_bid_size"] == "7"
+        assert s["best_ask"] == 0.51 and s["best_ask_size"] == "3"
+        assert s["midpoint"] == 0.505
+        assert s["spread"] == 0.01
 
 
 @respx.mock

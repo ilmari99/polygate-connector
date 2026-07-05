@@ -63,7 +63,6 @@ def _ensure_platform_api_key(settings: Settings) -> None:
 
 
 def create_app() -> FastAPI:
-    settings = get_settings()
     app = FastAPI(
         title="PolyGate",
         version=__version__,
