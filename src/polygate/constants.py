@@ -15,6 +15,14 @@ DATA_HOST = "https://data-api.polymarket.com"
 # caller asking for more than 100 actually receives them.
 GAMMA_PAGE_LIMIT = 100
 
+# Safety valve for ``collect_markets``: the most events a single scoped flatten
+# will page through before failing loud. Gamma has no server-side filter for
+# per-event attributes (e.g. a sports ``gameId``), so gathering a group means
+# scanning its whole series/tag and filtering client-side. Real series are small
+# (dozens); a scope that blows past this cap is too broad and must be narrowed,
+# so we raise rather than silently return an incomplete set.
+MARKET_SCAN_MAX_EVENTS = 5000
+
 # --- CLOB order signature type ---
 # How the order maker (FUNDER_ADDRESS) relates to the signer (PRIVATE_KEY):
 #   0 = EOA, 1 = POLY_PROXY (email/Google sign-up), 2 = POLY_GNOSIS_SAFE

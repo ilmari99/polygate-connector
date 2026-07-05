@@ -65,8 +65,8 @@ def pick_token() -> tuple[str, str]:
 
 def step(question: str, token_id: str) -> None:
     """One observe-decide-act cycle."""
-    midpoint = _request("GET", f"/midpoint/{token_id}")
-    price = float(midpoint["data"].get("mid", 0) or 0)
+    book = _request("GET", f"/orderbook/{token_id}")
+    price = float(book["data"].get("summary", {}).get("midpoint") or 0)
     print(f"[{time.strftime('%X')}] '{question[:48]}' token={token_id} mid={price:.3f}")
 
     # --- Trivial placeholder decision: bid one tick below the midpoint. ---

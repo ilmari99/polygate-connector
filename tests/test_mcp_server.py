@@ -39,6 +39,22 @@ class _FakeService:
             source="gamma",
         )
 
+    async def get_event(self, key, **params):
+        return ResponseEnvelope.of(
+            {"id": "654615", "slug": key, "gameId": 90086997, "markets": [{"id": "m1"}]},
+            source="gamma",
+        )
+
+    async def list_series(self, **params):
+        return ResponseEnvelope.of([{"id": "35", "slug": "fomc", "event_count": 3}], source="gamma")
+
+    async def collect_markets(self, **params):
+        return ResponseEnvelope.of(
+            {"scope": params, "event_count": 2, "market_count": 2,
+             "markets": [{"id": "m1", "event_slug": "a"}, {"id": "m2", "event_slug": "b"}]},
+            source="gamma",
+        )
+
 
 @pytest.fixture
 def fake_service():
@@ -54,7 +70,9 @@ async def test_health_tool_reports_mode():
     result = await mcp_server.health()
     assert result["status"] == "ok"
     assert result["mode"] == "dry-run"  # conftest sets DRY_RUN=true
-    assert "configured" in result
+    # health now folds in the config summary (config tool removed).
+    assert "wallet_configured" in result
+    assert "hosts" in result
 
 
 async def test_list_markets_wraps_envelope(fake_service):
@@ -70,6 +88,21 @@ async def test_search_serializes_flattened_envelope(fake_service):
     markets = result["data"]["markets"]
     assert markets and markets[0]["event_id"] == 7
     assert markets[0]["event_title"] == "Example event"
+
+
+async def test_collect_markets_serializes_flat_list(fake_service):
+    result = await mcp_server.collect_markets(event="fifwc-bra-nor", group_by="gameId")
+    assert result["source"] == "gamma"
+    data = result["data"]
+    assert data["market_count"] == 2
+    assert {m["id"] for m in data["markets"]} == {"m1", "m2"}
+
+
+async def test_series_tools_serialize(fake_service):
+    listed = await mcp_server.list_series()
+    assert listed["data"][0]["event_count"] == 3
+    ev = await mcp_server.get_event("fifwc-bra-nor")
+    assert ev["data"]["gameId"] == 90086997
 
 
 async def test_place_order_validation_error(fake_service):

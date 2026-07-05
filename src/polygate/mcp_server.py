@@ -172,12 +172,22 @@ the market's implied probability (Yes at 0.62 = 62%). You need not hold to resol
 sell any time at the current bid.
 
 Ids. event id -> `get_comments`; conditionId (0x...) -> `get_market`, `get_holders`;
-clobTokenId -> the book/price/order/trade tools. Prices and orders are ALWAYS per outcome
+clobTokenId -> the book/order/trade tools. Prices and orders are ALWAYS per outcome
 token, never per market. `outcomes`, `outcomePrices`, `clobTokenIds` are index-aligned.
 
-The `side` footgun. `get_price(token, side)` returns the best price on THAT side of the
-book: to buy you pay the ask (query side=SELL); to sell you get the bid (query side=BUY).
-Use `get_midpoint` for fair value.
+Structure. A `market` is the atomic tradable (one `conditionId`, its `clobTokenIds`). An
+`event` groups markets (a "market page"). Over events sit two parallel groupings: `tags`
+(flat categories) and `series` (recurring/multi-part sets - each Fed decision, a monthly
+BTC strike ladder, a tournament's fixtures). `gameId` is a sports-only event attribute, not
+a level. Polymarket splits one topic across several separate sibling events, so `search`
+and a single event show only a fragment. Navigate by deepening (`list_tags`/`list_series`
+-> `list_events(tag_id=/series_id=)` -> `get_event` -> markets) or flatten every atomic
+market under one scope with `collect_markets(series_id=|tag_id=|event=)`; for a sports game
+use `collect_markets(event=<slug>, group_by="gameId")` to gather all its sub-markets.
+
+The `side` footgun. `get_order_book` returns a `summary` with `best_bid`, `best_ask`,
+`midpoint`, and `spread`. To buy you pay the `best_ask`; to sell you get the `best_bid`;
+use `midpoint` for fair value.
 
 Tradeable only when `active` is true and `closed` is false, `acceptingOrders` and
 `enableOrderBook` are true, and `endDate` is in the future (re-check on the object).
@@ -205,22 +215,18 @@ mcp = FastMCP(
 # --------------------------------------------------------------------------- #
 @mcp.tool()
 async def health() -> dict[str, Any]:
-    """Liveness and current run mode. Shows whether a wallet is configured."""
+    """Liveness, version, run mode, and the active (secret-free) configuration.
+
+    Reports `status`/`version`/`can_trade_live` plus the full config summary
+    (mode, wallet, CLOB creds, hosts).
+    """
     settings = get_settings()
     return {
         "status": "ok",
         "version": __version__,
-        "mode": "dry-run" if settings.dry_run else "live",
-        "configured": settings.has_wallet,
-        "wallet_address": settings.funder_address,
         "can_trade_live": settings.can_trade_live,
+        **settings.public_summary(),
     }
-
-
-@mcp.tool()
-async def config() -> dict[str, Any]:
-    """Secret-free summary of the active configuration (mode, wallet, hosts)."""
-    return get_settings().public_summary()
 
 
 @mcp.resource("polygate://trading-guide", mime_type="text/markdown")
@@ -289,6 +295,7 @@ async def list_events(
     active: bool = True,
     closed: bool = False,
     tag_id: int | None = None,
+    series_id: int | None = None,
     limit: int = 50,
     offset: int = 0,
     order: str | None = None,
@@ -296,17 +303,88 @@ async def list_events(
 ) -> dict[str, Any]:
     """List events (each event groups one or more markets).
 
-    A `limit` over 100 is paged automatically past Gamma's per-page cap. Set
-    `compact=True` to drop low-signal fields and compact the nested markets.
+    `tag_id` drills into a category; `series_id` drills into a series (a
+    recurring/multi-part group - each Fed decision, a monthly BTC strike ladder,
+    a tournament's fixtures). A `limit` over 100 is paged automatically past
+    Gamma's per-page cap. Set `compact=True` to drop low-signal fields and
+    compact the nested markets.
     """
     return await _serialize(
         _require_service().list_events(
             active=active,
             closed=closed,
             tag_id=tag_id,
+            series_id=series_id,
             limit=limit,
             offset=offset,
             order=order,
+            compact=compact,
+        )
+    )
+
+
+@mcp.tool()
+async def get_event(key: str, compact: bool = False) -> dict[str, Any]:
+    """Fetch a single event (with its nested markets) by slug or event id.
+
+    An event is a 'market page' grouping one or more atomic markets. Use this to
+    resolve a slug/id you got from `search` or `list_events` into the full object,
+    then read its `series`/`gameId` to navigate to related events. Set
+    `compact=True` to drop low-signal fields.
+    """
+    return await _serialize(_require_service().get_event(key, compact=compact))
+
+
+@mcp.tool()
+async def list_series(limit: int = 100, offset: int = 0, compact: bool = False) -> dict[str, Any]:
+    """List series - Polymarket's recurring/multi-part groupings of events.
+
+    Examples: `fomc` (each Fed decision), `cpi`, `btc-multi-strikes-weekly`,
+    `nyc-daily-weather`, a sports league or tournament. A lightweight catalog:
+    each entry carries an `event_count` instead of its events. Drill into a
+    series with `list_events(series_id=...)` or flatten it with
+    `collect_markets(series_id=...)`.
+    """
+    return await _serialize(
+        _require_service().list_series(limit=limit, offset=offset, compact=compact)
+    )
+
+
+@mcp.tool()
+async def collect_markets(
+    series_id: int | None = None,
+    tag_id: int | None = None,
+    event: str | None = None,
+    group_by: str | None = None,
+    active: bool = True,
+    closed: bool = False,
+    compact: bool = False,
+) -> dict[str, Any]:
+    """Flatten every atomic market under one grouping node into a single flat list.
+
+    Polymarket buries related markets across separate sibling events, so `search`
+    and drilling into one event show only a fragment. This gathers them all. Pass
+    EXACTLY ONE scope:
+    - `series_id` - every market in that series' events.
+    - `tag_id` - every market in that category's events.
+    - `event` (slug or id) - that event's markets; add `group_by="gameId"` to
+      expand a sports fixture to all its sibling events (moneyline, spread,
+      totals, ...) and collect their markets. `group_by` names any event
+      attribute - no key is hardcoded, so a future non-sports link key works too.
+
+    Each returned market is tagged with its parent `event_id`/`event_title`/
+    `event_slug` and carries its `conditionId` and `clobTokenIds`. The scan runs
+    to completion and errors if the scope is too broad - never silently partial.
+    Set `compact=True` to drop low-signal fields.
+    """
+    return await _serialize(
+        _require_service().collect_markets(
+            series_id=series_id,
+            tag_id=tag_id,
+            event=event,
+            group_by=group_by,
+            active=active,
+            closed=closed,
             compact=compact,
         )
     )
@@ -322,33 +400,11 @@ async def list_tags() -> dict[str, Any]:
 async def get_order_book(token_id: str) -> dict[str, Any]:
     """Full CLOB order book for an outcome token (`clobTokenId`).
 
-    Bid/ask arrays are not guaranteed sorted: best bid is the max bid price, best
-    ask is the min ask price.
+    Carries a derived `summary` computed from the ladder: `best_bid`, `best_ask`
+    (with sizes), `midpoint` (fair value), and `spread`.
+    To buy you pay `best_ask`; to sell you get `best_bid`.
     """
     return await _serialize(_require_service().order_book(token_id))
-
-
-@mcp.tool()
-async def get_price(token_id: str, side: str = "BUY") -> dict[str, Any]:
-    """Best book price for an outcome token on one side.
-
-    `side=BUY` returns the best bid, `side=SELL` the best ask. Note: the price you
-    pay to BUY is the ask (query side=SELL); the price you get to SELL is the bid
-    (query side=BUY).
-    """
-    return await _serialize(_require_service().price(token_id, side))
-
-
-@mcp.tool()
-async def get_midpoint(token_id: str) -> dict[str, Any]:
-    """Order-book midpoint for an outcome token - a fair-value estimate."""
-    return await _serialize(_require_service().midpoint(token_id))
-
-
-@mcp.tool()
-async def get_spread(token_id: str) -> dict[str, Any]:
-    """Current bid/ask spread for an outcome token."""
-    return await _serialize(_require_service().spread(token_id))
 
 
 @mcp.tool()

@@ -125,6 +125,30 @@ Once the tools are loaded, just ask anything about Polymarket. For example:
 > keeping a memory of what it learns — hand it [`llm.md`](llm.md), an optional
 > briefing written for the agent.
 
+## Navigating Polymarket
+
+Polymarket has one containment and two cross-cutting groupings — PolyGate exposes
+each so an agent can find *everything*, not just what full-text search surfaces:
+
+- **Market** — the atomic tradable question (a `0x…` `conditionId`, its
+  `clobTokenIds`). Prices and orders are always per outcome token.
+- **Event** — a "market page" grouping one or more markets.
+- **Tags** and **Series** — two independent groupings *over* events. Tags are flat
+  categories; a **series** is a recurring or multi-part set (each Fed decision, a
+  monthly BTC strike ladder, a tournament's fixtures). `gameId` is not a level — it
+  is a sports-only *attribute* that a game's sibling events share.
+
+Because Polymarket splits one topic across several separate events (a match's
+moneyline, spread, and totals are distinct events), opening one event or searching
+shows only a fragment. Two ways to navigate:
+
+- **Deepen:** `list_tags` / `list_series` → `list_events(tag_id=/series_id=)` →
+  `get_event` → its markets.
+- **Flatten:** `collect_markets(series_id=|tag_id=|event=)` returns every atomic
+  market under one scope in a single list. For a sports game,
+  `collect_markets(event=<slug>, group_by="gameId")` gathers all its sub-markets at
+  once.
+
 ## How it works
 
 Every tool is a thin wrapper over one in-process core, `PolymarketService`, which
@@ -174,7 +198,7 @@ All settings are environment variables set in the `env` block of your MCP config
 | `LOG_LEVEL`       |    no    | Logging level (default `INFO`).                          |
 | `SIGNATURE_TYPE`, `CLOB_API_KEY`, `CLOB_SECRET`, `CLOB_PASSPHRASE` | auto | Derived/detected in memory at startup; set only to override. |
 
-Market-data and research tools (`list_markets`, `get_order_book`, `get_price`,
+Market-data and research tools (`list_markets`, `get_order_book`, `collect_markets`,
 `search`, `get_holders`, …) work **without a wallet**. Account and trading tools
 (`get_positions`, `get_balance`, `place_order`, `cancel_order`, …) require
 `PRIVATE_KEY` and `FUNDER_ADDRESS`. Use `DRY_RUN=true` to exercise `place_order`
