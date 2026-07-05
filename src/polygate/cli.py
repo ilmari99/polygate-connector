@@ -28,6 +28,7 @@ PolyGate - REST gateway to Polymarket.
 
 Usage:
   polygate           Start the gateway server.
+  polygate connect   Expose an OAuth-protected HTTPS MCP endpoint for web AIs.
   polygate setup     Connect your Polymarket wallet (interactive, terminal-based).
   polygate --help    Show this message.
 """
@@ -132,6 +133,10 @@ def dispatch(args: list[str]) -> int:
     cmd = args[0]
     if cmd == "setup":
         return run_setup()
+    if cmd == "connect":
+        from .connect import run_connect
+
+        return run_connect(args[1:])
     if cmd in ("-h", "--help", "help"):
         print(_USAGE)
         return 0

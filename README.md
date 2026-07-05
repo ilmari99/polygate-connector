@@ -80,6 +80,53 @@ this into your MCP host's config:
 
 Reload your host and the market-data, price, and research tools appear.
 
+### Connect a web AI
+
+Use `polygate connect` when the AI runs in a website (ChatGPT, Claude, Grok,
+etc.) and needs a public HTTPS MCP URL plus OAuth credentials instead of a local
+stdio command.
+
+Install the two command-line dependencies:
+
+| OS | Install `uv` | Install `cloudflared` tunnel |
+| --- | --- | --- |
+| macOS | `brew install uv` or the installer above | `brew install cloudflared` |
+| Windows | `winget install --id=astral-sh.uv -e` | `winget install --id Cloudflare.cloudflared` |
+| Linux | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
+
+Then run:
+
+```bash
+uvx --from git+https://github.com/ilmari99/polygate@v0.3.0 polygate connect
+```
+
+PolyGate starts a loopback HTTP MCP server, opens a temporary Cloudflare HTTPS
+tunnel, provisions OAuth client credentials, and prints a connection card:
+
+```text
+MCP URL / Server URL:         https://random.trycloudflare.com/mcp
+Client ID / OAuth ID:         polygate-...
+Client secret / OAuth secret: pg_secret_...   (treat this like a password)
+Mode:                         RESEARCH ONLY
+```
+
+In your web AI's custom connector screen, paste:
+
+- **ChatGPT**: enable developer/custom connectors, add an MCP server, then use
+  the card's **MCP URL** as the server URL and the **Client ID** / **Client
+  secret** as the user-defined OAuth client.
+- **Claude**: add a custom connector with the card's **MCP URL**. Claude can use
+  the OAuth discovery endpoints; if it asks for manual credentials, paste the
+  **Client ID** and **Client secret**.
+- **Grok**: create a custom remote MCP connector, paste the **MCP URL**, and use
+  the card's **Client ID** and **Client secret** for OAuth.
+
+The command runs until Ctrl-C, which stops the tunnel and disconnects the web AI.
+Re-running reuses the same OAuth credentials; use `--new-credentials` to rotate
+them. Trading is off by default even if you have a wallet configured. To allow
+real orders, first run `polygate setup`, then run `polygate connect
+--allow-trading` and type the confirmation phrase shown in the terminal.
+
 ### Add your wallet to trade
 
 Credentials are needed **only for trading**. To let the agent place and cancel
