@@ -29,8 +29,18 @@ will also be visible on Polymarket.com, and you can use the site to manage your 
 
 ## Quick start
 
-The only requirement is **[uv](https://docs.astral.sh/uv/)**. Install it for your
-platform:
+There are two ways to give your AI PolyGate's tools — pick one:
+
+- **[Connect a web AI](#connect-a-web-ai)** — for AIs that run in a website
+  (ChatGPT, Claude, Grok, …). Run one command and paste three values into the
+  site. No config file to edit. **Lowest barrier.**
+- **[Run as a local MCP server](#run-as-a-local-mcp-server)** — for desktop/IDE
+  hosts (Claude Desktop, Claude Code, VS Code, Cursor, OpenClaw). Add a small JSON
+  block to the host's config.
+
+Either way, the only tool you install is **[uv](https://docs.astral.sh/uv/)** —
+`uvx`. The web AI path needs one more tool, **cloudflared** —
+covered in that section below.
 
 <details open>
 <summary><b>macOS</b></summary>
@@ -61,47 +71,45 @@ Or with [winget](https://learn.microsoft.com/windows/package-manager/):
 `winget install --id=astral-sh.uv -e`.
 </details>
 
-`uvx` (bundled with uv) then fetches and runs PolyGate on demand, with no clone or
+`uvx` (bundled with uv) fetches and runs PolyGate on demand — no clone, no
 `pip install`.
 
-To **research and read** markets — no Polymarket account or keys needed — paste
-this into your MCP host's config:
+## Connect a web AI
 
-```json
-{
-  "mcpServers": {
-    "polygate": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"]
-    }
-  }
-}
-```
+For an AI that runs in a browser (ChatGPT, Claude, Grok, …), `polygate connect`
+exposes PolyGate at a public HTTPS MCP URL with OAuth credentials — nothing to
+configure in a file. It needs one extra dependency, **cloudflared** (the tunnel):
 
-Reload your host and the market-data, price, and research tools appear.
+| OS | Install `cloudflared` |
+| --- | --- |
+| macOS | `brew install cloudflared` |
+| Windows | `winget install --id Cloudflare.cloudflared` |
+| Linux | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
 
-### Connect a web AI
-
-Use `polygate connect` when the AI runs in a website (ChatGPT, Claude, Grok,
-etc.) and needs a public HTTPS MCP URL plus OAuth credentials instead of a local
-stdio command.
-
-Install the two command-line dependencies:
-
-| OS | Install `uv` | Install `cloudflared` tunnel |
-| --- | --- | --- |
-| macOS | `brew install uv` or the installer above | `brew install cloudflared` |
-| Windows | `winget install --id=astral-sh.uv -e` | `winget install --id Cloudflare.cloudflared` |
-| Linux | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
-
-Then run:
+**Optional first step — connect a wallet to enable trading.** Skip this to stay
+research-only (search, prices, and market data need no wallet or keys). To let
+the web AI place real orders, connect your Polymarket wallet once:
 
 ```bash
-uvx --from git+https://github.com/ilmari99/polygate@v0.3.0 polygate connect
+uvx --from git+https://github.com/ilmari99/polygate@v0.4.0 polygate setup
 ```
 
-PolyGate starts a loopback HTTP MCP server, opens a temporary Cloudflare HTTPS
-tunnel, provisions OAuth client credentials, and prints a connection card:
+**Start the connector.** For research and reading only:
+
+```bash
+uvx --from git+https://github.com/ilmari99/polygate@v0.4.0 polygate connect
+```
+
+If you connected a wallet above and want the AI to trade, add `--allow-trading`
+(you'll be asked to type a confirmation phrase in the terminal before trading
+turns on):
+
+```bash
+uvx --from git+https://github.com/ilmari99/polygate@v0.4.0 polygate connect --allow-trading
+```
+
+Either command starts a loopback MCP server, opens a temporary Cloudflare HTTPS
+tunnel, provisions OAuth credentials, and prints a connection card:
 
 ```text
 MCP URL / Server URL:         https://random.trycloudflare.com/mcp
@@ -110,17 +118,17 @@ Client secret / OAuth secret: pg_secret_...   (treat this like a password)
 Mode:                         RESEARCH ONLY
 ```
 
-In your web AI's custom connector screen, paste the card's **MCP URL**,
-**Client ID**, and **Client secret**:
+Paste the card's **MCP URL**, **Client ID**, and **Client secret** into your web
+AI's custom-connector screen:
 
+- **Claude**: follow the step-by-step walkthrough below.
 - **ChatGPT**: enable developer/custom connectors, add an MCP server, then use
   the card's **MCP URL** as the server URL and the **Client ID** / **Client
   secret** as the user-defined OAuth client.
-- **Claude**: follow the step-by-step walkthrough below.
 - **Grok**: create a custom remote MCP connector, paste the **MCP URL**, and use
   the card's **Client ID** and **Client secret** for OAuth.
 
-#### Add PolyGate to Claude (web)
+### Add PolyGate to Claude (web)
 
 Keep the `polygate connect` terminal open so its connection card stays visible,
 then in [claude.ai](https://claude.ai):
@@ -140,14 +148,30 @@ then in [claude.ai](https://claude.ai):
 
    ![Claude: Manage connectors → Connect polygate](assets/connectors-manage-connect.png)
 
-PolyGate's research tools now appear in Claude. If you enabled trading, the
-place/cancel-order tools appear too.
+PolyGate's research tools now appear in Claude; if you started with
+`--allow-trading`, the place/cancel-order tools appear too.
 
 The command runs until Ctrl-C, which stops the tunnel and disconnects the web AI.
 Re-running reuses the same OAuth credentials; use `--new-credentials` to rotate
-them. Trading is off by default even if you have a wallet configured. To allow
-real orders, first run `polygate setup`, then run `polygate connect
---allow-trading` and type the confirmation phrase shown in the terminal.
+them.
+
+## Run as a local MCP server
+
+For a desktop or IDE host, add PolyGate to the host's MCP config. To **research
+and read** markets — no Polymarket account or keys needed — paste this in:
+
+```json
+{
+  "mcpServers": {
+    "polygate": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"]
+    }
+  }
+}
+```
+
+Reload your host and the market-data, price, and research tools appear.
 
 ### Add your wallet to trade
 
