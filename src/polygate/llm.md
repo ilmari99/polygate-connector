@@ -123,8 +123,7 @@ the raw arrays). To **buy** you pay ≈ the `best_ask`; to **sell** you get ≈ 
 `active` is true **and** `closed` is false (re-check on the object — list filters
 aren't strict), and `endDate` is in the future.
 
-**Number formats.** Coerce before doing math. CLOB values (order-book prices,
-spread, book) are **strings**; Gamma `volume`/`liquidity` are strings but
+**Number formats.** Coerce before doing math. In the CLOB book, raw ladder values (`bids`/`asks` `price`/`size`) are **strings**; PolyGate's derived `summary` fields (`best_bid`, `best_ask`, `midpoint`, `spread`) are floats. Gamma `volume`/`liquidity` are strings but
 `bestBid`/`bestAsk` are numbers. `get_balance` returns a **raw 6-decimal integer
 string** (`"10315044"` = `10.315044` USDC → ÷1e6), while `get_portfolio_value` and
 position dollar fields are already dollars. Check `balance/1e6 ≥ price × size`
