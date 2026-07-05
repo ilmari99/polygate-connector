@@ -355,6 +355,7 @@ def _start_tunnel(port: int) -> tuple[subprocess.Popen[str], str]:
         bufsize=1,
     )
     assert proc.stdout is not None
+    # Quick tunnels can spend several seconds selecting an edge and printing the URL.
     deadline = time.time() + _TUNNEL_STARTUP_TIMEOUT
     url_re = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
     lines: list[str] = []
@@ -398,7 +399,8 @@ def _print_card(public_url: str, creds: ConnectCredentials, *, trading: bool, ha
     print(f"  Mode:                       {mode}{setup_hint}")
     print()
     print("Paste these three values into your AI connector screen.")
-    print("! Anyone with this URL and credentials can use your PolyGate. Ctrl-C to disconnect.")
+    print("! Treat this terminal output as sensitive. Anyone with this URL and credentials can use your PolyGate.")
+    print("  Ctrl-C to disconnect.")
 
 
 def run_connect(argv: list[str] | None = None) -> int:
