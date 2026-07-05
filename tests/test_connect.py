@@ -8,7 +8,6 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 
 from polygate import cli
-from polygate import connect
 from polygate.config import get_settings
 from polygate.connect import (
     ConnectCredentials,
@@ -71,7 +70,7 @@ def test_oauth_flow_gates_mcp_and_issues_token() -> None:
             data={
                 "grant_type": "authorization_code",
                 "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
+                "client_secret": creds.client_credential,
                 "code": params["code"][0],
                 "redirect_uri": "https://ai.example/callback",
                 "code_verifier": verifier,
@@ -81,7 +80,7 @@ def test_oauth_flow_gates_mcp_and_issues_token() -> None:
         access_token = token.json()["access_token"]
 
         authed = client.get(
-            "/mcp", headers={"Authorization": f"{connect._BEARER} {access_token}"}
+            "/mcp", headers={"Authorization": f"Bearer {access_token}"}
         )
         assert authed.status_code != 401
 

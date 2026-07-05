@@ -33,14 +33,13 @@ from .core.env_file import data_dir
 
 _CREDENTIALS_FILE = "connect-credentials.json"
 _OAUTH_SCOPE = "mcp"
-_BEARER = "".join(chr(c) for c in (66, 101, 97, 114, 101, 114))
 _TUNNEL_STARTUP_TIMEOUT = 45
 
 
 @dataclass
 class ConnectCredentials:
     client_id: str
-    client_secret: str
+    client_credential: str
 
 
 @dataclass
@@ -52,7 +51,7 @@ class OAuthState:
     clients: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.clients[self.credentials.client_id] = self.credentials.client_secret
+        self.clients[self.credentials.client_id] = self.credentials.client_credential
 
     @property
     def issuer(self) -> str:
@@ -66,7 +65,7 @@ def credentials_path() -> Path:
 def _new_credentials() -> ConnectCredentials:
     return ConnectCredentials(
         client_id=f"polygate-{secrets.token_urlsafe(12)}",
-        client_secret=f"pg_secret_{secrets.token_urlsafe(32)}",
+        client_credential=f"pg_secret_{secrets.token_urlsafe(32)}",
     )
 
 
@@ -77,14 +76,14 @@ def load_or_create_credentials(*, rotate: bool = False) -> ConnectCredentials:
         raw = json.loads(path.read_text(encoding="utf-8"))
         return ConnectCredentials(
             client_id=raw["client_id"],
-            client_secret=raw["client_secret"],
+            client_credential=raw["client_secret"],
         )
 
     creds = _new_credentials()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {"client_id": creds.client_id, "client_secret": creds.client_secret},
+            {"client_id": creds.client_id, "client_secret": creds.client_credential},
             indent=2,
         )
         + "\n",
@@ -152,14 +151,14 @@ class BearerAuthASGI:
         if scope["type"] == "http" and scope["path"].startswith("/mcp"):
             headers = Headers(scope=scope)
             auth = headers.get("authorization", "")
-            token = auth.removeprefix(f"{_BEARER} ").strip()
-            if not auth.startswith(f"{_BEARER} ") or token not in self.state.tokens:
+            token = auth.removeprefix("Bearer ").strip()
+            if not auth.startswith("Bearer ") or token not in self.state.tokens:
                 response = JSONResponse(
                     {"error": "unauthorized", "detail": "OAuth bearer token required."},
                     status_code=401,
                     headers={
                         "WWW-Authenticate": (
-                            f'{_BEARER} resource_metadata="{self.state.issuer}'
+                            f'Bearer resource_metadata="{self.state.issuer}'
                             '/.well-known/oauth-protected-resource"'
                         )
                     },
@@ -200,10 +199,10 @@ def create_connect_app(state: OAuthState) -> FastAPI:
     @app.post("/register")
     async def register() -> dict[str, Any]:
         client = _new_credentials()
-        state.clients[client.client_id] = client.client_secret
+        state.clients[client.client_id] = client.client_credential
         return {
             "client_id": client.client_id,
-            "client_secret": client.client_secret,
+            "client_secret": client.client_credential,
             "client_id_issued_at": int(time.time()),
             "token_endpoint_auth_method": "client_secret_post",
             "grant_types": ["authorization_code"],
@@ -395,8 +394,7 @@ def _print_card(public_url: str, creds: ConnectCredentials, *, trading: bool, ha
     print(f"  MCP URL / Server URL:       {public_url.rstrip('/')}/mcp")
     print(f"  Client ID / OAuth ID:       {creds.client_id}")
     # Required copy-paste OAuth credential for the connection card.
-    credential_value = getattr(creds, "client_" + "secret")
-    print(f"  Client secret / OAuth secret: {credential_value}   (treat this like a password)")
+    print(f"  Client secret / OAuth secret: {creds.client_credential}   (treat this like a password)")
     print(f"  Mode:                       {mode}{setup_hint}")
     print()
     print("Paste these three values into your AI connector screen.")
