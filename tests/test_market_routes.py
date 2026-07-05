@@ -59,18 +59,18 @@ def test_list_markets_decodes_and_compacts(auth_headers):
         return_value=httpx.Response(200, json=[raw])
     )
     with TestClient(create_app()) as client:
-        # Default: JSON fields decoded, full payload retained.
-        full = client.get("/markets", headers=auth_headers).json()["data"][0]
-        assert full["clobTokenIds"] == ["111", "222"]
-        assert full["outcomePrices"] == ["0.6", "0.4"]
-        assert "description" in full
-        # Compact: decoded AND stripped of low-signal fields.
-        compact = client.get(
-            "/markets", params={"compact": "true"}, headers=auth_headers
-        ).json()["data"][0]
+        # Default is now compact: JSON fields decoded AND low-signal fields stripped.
+        compact = client.get("/markets", headers=auth_headers).json()["data"][0]
         assert compact["clobTokenIds"] == ["111", "222"]
+        assert compact["outcomePrices"] == ["0.6", "0.4"]
         assert compact["volumeNum"] == 9.0
         assert "description" not in compact and "image" not in compact
+        # Full payload on demand: compact=false keeps every field, still decoded.
+        full = client.get(
+            "/markets", params={"compact": "false"}, headers=auth_headers
+        ).json()["data"][0]
+        assert full["clobTokenIds"] == ["111", "222"]
+        assert "description" in full and "image" in full
 
 
 
@@ -245,7 +245,7 @@ def test_upstream_error_is_normalised(auth_headers):
     with TestClient(create_app()) as client:
         resp = client.get("/markets", headers=auth_headers)
         assert resp.status_code == 502
-        assert resp.json()["error"] == "gamma_error"
+        assert resp.json()["error"] == "upstream_error"
 
 
 def test_place_order_dry_run_returns_simulated(auth_headers):
@@ -300,7 +300,7 @@ def test_search_routes_to_gamma(auth_headers):
 
 
 @respx.mock
-def test_search_flattens_markets_with_event_context(auth_headers):
+def test_search_flatten_is_opt_in(auth_headers):
     respx.get("https://gamma-api.polymarket.com/public-search").mock(
         return_value=httpx.Response(
             200,
@@ -319,16 +319,21 @@ def test_search_flattens_markets_with_event_context(auth_headers):
         )
     )
     with TestClient(create_app()) as client:
-        body = client.get(
+        # Default: no flat top-level markets array; nested markets still decoded.
+        default = client.get(
             "/search", params={"q": "rain"}, headers=auth_headers
-        ).json()
-        markets = body["data"]["markets"]
-        assert len(markets) == 1
-        assert markets[0]["id"] == "m1"
-        # clobTokenIds is decoded from Gamma's JSON string to a real array.
-        assert markets[0]["clobTokenIds"] == ["111", "222"]
-        assert markets[0]["event_id"] == "42"
-        assert markets[0]["event_title"] == "Will it rain?"
+        ).json()["data"]
+        assert "markets" not in default
+        assert default["events"][0]["markets"][0]["clobTokenIds"] == ["111", "222"]
+        # Opt-in: flatten=true synthesizes the tagged flat array.
+        flat = client.get(
+            "/search", params={"q": "rain", "flatten": "true"}, headers=auth_headers
+        ).json()["data"]["markets"]
+        assert len(flat) == 1
+        assert flat[0]["id"] == "m1"
+        assert flat[0]["clobTokenIds"] == ["111", "222"]
+        assert flat[0]["event_id"] == "42"
+        assert flat[0]["event_title"] == "Will it rain?"
 
 
 @respx.mock

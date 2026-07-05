@@ -36,6 +36,8 @@ from contextlib import asynccontextmanager
 from importlib.resources import files
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
+
 from . import __version__
 from .config import Settings, get_settings
 from .core import logging as core_logging
@@ -208,6 +210,10 @@ mcp = FastMCP(
     instructions=INSTRUCTIONS,
     lifespan=_lifespan,
 )
+# FastMCP doesn't expose the low-level server's version, so it otherwise defaults
+# to the MCP SDK's own version in the initialize handshake (a host would show
+# e.g. "polygate 1.28.0"). Set it to our package version so serverInfo is right.
+mcp._mcp_server.version = __version__
 
 
 # --------------------------------------------------------------------------- #
@@ -251,7 +257,7 @@ async def list_markets(
     offset: int = 0,
     order: str | None = None,
     ascending: bool | None = None,
-    compact: bool = False,
+    compact: bool = True,
 ) -> dict[str, Any]:
     """List markets (Gamma). Pass `slug` to fetch one market by its slug.
 
@@ -259,8 +265,9 @@ async def list_markets(
     `outcomePrices` (each price is the implied probability), and `clobTokenIds`
     (the Yes/No token ids you trade on). Sort with `order` (e.g. 'volume24hr',
     'liquidity') plus `ascending`; a `limit` over 100 is paged automatically past
-    Gamma's 100-row cap. Set `compact=True` to drop low-signal fields
-    (descriptions, images, AMM internals) and shrink the payload.
+    Gamma's 100-row cap. Returns compact rows by default (low-signal fields -
+    descriptions, images, AMM internals - are dropped); pass `compact=False` for
+    the full objects.
     """
     return await _serialize(
         _require_service().list_markets(
@@ -278,14 +285,15 @@ async def list_markets(
 
 
 @mcp.tool()
-async def get_market(condition_id: str, compact: bool = False) -> dict[str, Any]:
-    """Fetch a single market by its `conditionId` (0x...).
+async def get_market(condition_id: str, compact: bool = True) -> dict[str, Any]:
+    """Fetch a single market by its `conditionId` (0x...), as one object.
 
-    The full object to read before trading: `description`/`resolutionSource` (the
-    exact resolution criteria), the tradeable flags (`active`, `closed`,
-    `acceptingOrders`, `enableOrderBook`), `endDate`, and the fee params
-    (`makerBaseFee`/`takerBaseFee` in basis points, `feesEnabled`). Set
-    `compact=True` to drop low-signal fields.
+    Returns the market object (not a list); raises `not_found` if the id resolves
+    to nothing. The full object to read before trading: `description`/
+    `resolutionSource` (the exact resolution criteria), the tradeable flags
+    (`active`, `closed`, `acceptingOrders`, `enableOrderBook`), `endDate`, and the
+    fee params (`makerBaseFee`/`takerBaseFee` in basis points, `feesEnabled`).
+    Compact by default; pass `compact=False` for every field.
     """
     return await _serialize(_require_service().get_market(condition_id, compact=compact))
 
@@ -299,15 +307,15 @@ async def list_events(
     limit: int = 50,
     offset: int = 0,
     order: str | None = None,
-    compact: bool = False,
+    compact: bool = True,
 ) -> dict[str, Any]:
     """List events (each event groups one or more markets).
 
     `tag_id` drills into a category; `series_id` drills into a series (a
     recurring/multi-part group - each Fed decision, a monthly BTC strike ladder,
     a tournament's fixtures). A `limit` over 100 is paged automatically past
-    Gamma's per-page cap. Set `compact=True` to drop low-signal fields and
-    compact the nested markets.
+    Gamma's per-page cap. Compact by default (low-signal fields dropped and the
+    nested markets compacted); pass `compact=False` for full objects.
     """
     return await _serialize(
         _require_service().list_events(
@@ -324,19 +332,19 @@ async def list_events(
 
 
 @mcp.tool()
-async def get_event(key: str, compact: bool = False) -> dict[str, Any]:
+async def get_event(key: str, compact: bool = True) -> dict[str, Any]:
     """Fetch a single event (with its nested markets) by slug or event id.
 
     An event is a 'market page' grouping one or more atomic markets. Use this to
     resolve a slug/id you got from `search` or `list_events` into the full object,
-    then read its `series`/`gameId` to navigate to related events. Set
-    `compact=True` to drop low-signal fields.
+    then read its `series`/`gameId` to navigate to related events. Compact by
+    default; pass `compact=False` for every field.
     """
     return await _serialize(_require_service().get_event(key, compact=compact))
 
 
 @mcp.tool()
-async def list_series(limit: int = 100, offset: int = 0, compact: bool = False) -> dict[str, Any]:
+async def list_series(limit: int = 100, offset: int = 0, compact: bool = True) -> dict[str, Any]:
     """List series - Polymarket's recurring/multi-part groupings of events.
 
     Examples: `fomc` (each Fed decision), `cpi`, `btc-multi-strikes-weekly`,
@@ -358,7 +366,7 @@ async def collect_markets(
     group_by: str | None = None,
     active: bool = True,
     closed: bool = False,
-    compact: bool = False,
+    compact: bool = True,
 ) -> dict[str, Any]:
     """Flatten every atomic market under one grouping node into a single flat list.
 
@@ -375,7 +383,7 @@ async def collect_markets(
     Each returned market is tagged with its parent `event_id`/`event_title`/
     `event_slug` and carries its `conditionId` and `clobTokenIds`. The scan runs
     to completion and errors if the scope is too broad - never silently partial.
-    Set `compact=True` to drop low-signal fields.
+    Compact by default; pass `compact=False` for full objects.
     """
     return await _serialize(
         _require_service().collect_markets(
@@ -425,7 +433,9 @@ async def get_prices_history(
 
     Provide either `interval` (e.g. '1h', '6h', '1d', '1w', 'max') or a
     `start_ts`/`end_ts` Unix-seconds window. `fidelity` is the resolution in
-    minutes.
+    minutes. If you pass none of these it defaults to a 1-week window at hourly
+    resolution; the applied `interval` is echoed back in the payload so you know
+    the span you received.
     """
     return await _serialize(
         _require_service().prices_history(
@@ -443,15 +453,23 @@ async def search(
     limit_per_type: int | None = None,
     page: int | None = None,
     events_status: str | None = None,
-    compact: bool = False,
+    compact: bool = True,
+    flatten: bool = False,
 ) -> dict[str, Any]:
     """Full-text search over Polymarket events and markets.
 
-    Results group under `events`; a flat `markets` array is also returned (each
-    entry tagged with `event_id`/`event_title`) so you can read `clobTokenIds`
-    directly - decoded to an array, like `outcomes` and `outcomePrices`.
-    `events_status` may be e.g. 'active' or 'resolved'. Set `compact=True` to
-    drop low-signal fields.
+    Results group under `events`; each event's nested markets already carry the
+    decoded `clobTokenIds` (an array, like `outcomes`/`outcomePrices`) you trade
+    on. `limit_per_type` bounds the number of events, not the markets nested in
+    each, so a few hits can still be a large payload. Polymarket splits one topic
+    across sibling events (a game's moneyline, spreads, exact-score, ... are
+    separate events), so search shows only a fragment: to gather every market for
+    a fixture, pass its slug to `collect_markets(event=<slug>, group_by="gameId")`.
+    Set `flatten=True` to also get a top-level `markets` array (each entry tagged
+    with `event_id`/`event_title`/`event_slug`) - off by default because it
+    duplicates every nested market and roughly doubles the payload. `events_status`
+    may be e.g. 'active' or 'resolved'. Compact by default; pass `compact=False`
+    for full objects.
     """
     return await _serialize(
         _require_service().search(
@@ -460,6 +478,7 @@ async def search(
             page=page,
             events_status=events_status,
             compact=compact,
+            flatten=flatten,
         )
     )
 
@@ -494,13 +513,14 @@ async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
 # Portfolio / account (require a configured wallet)
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-async def get_positions(limit: int = 100) -> dict[str, Any]:
+async def get_positions(limit: int = 100, compact: bool = True) -> dict[str, Any]:
     """Open positions for the configured wallet. Requires a wallet.
 
     Eventually consistent: right after a fill it may lag, so re-poll rather than
-    trust an empty result.
+    trust an empty result. Compact by default (drops the `icon` url); pass
+    `compact=False` for every field.
     """
-    return await _serialize(_require_service().positions(limit=limit))
+    return await _serialize(_require_service().positions(limit=limit, compact=compact))
 
 
 @mcp.tool()
@@ -514,15 +534,22 @@ async def get_balance(token_id: str | None = None) -> dict[str, Any]:
     """Collateral (USDC) balance, or a conditional-token balance when `token_id` is set.
 
     USDC balances are raw 6-decimal integer strings: divide by 1,000,000 for
-    dollars. Requires a configured wallet and CLOB credentials.
+    dollars. The per-contract `allowances` are collapsed to `"unlimited"` where
+    Polymarket has granted the max approval (a finite value would mean trading is
+    capped/blocked). Requires a configured wallet and CLOB credentials.
     """
     return await _serialize(_require_service().balance(token_id=token_id))
 
 
 @mcp.tool()
-async def get_activity(limit: int = 100) -> dict[str, Any]:
-    """Account activity feed for the configured wallet. Requires a wallet."""
-    return await _serialize(_require_service().activity(limit=limit))
+async def get_activity(limit: int = 100, compact: bool = True) -> dict[str, Any]:
+    """Account activity feed for the configured wallet. Requires a wallet.
+
+    Compact by default (drops the wallet's own profile/identity noise - `icon`,
+    `name`, `pseudonym`, `bio`, `profileImage*`); pass `compact=False` for every
+    field.
+    """
+    return await _serialize(_require_service().activity(limit=limit, compact=compact))
 
 
 @mcp.tool()
@@ -540,9 +567,15 @@ async def get_open_orders(
 
 
 @mcp.tool()
-async def get_trades() -> dict[str, Any]:
-    """Trade history for the configured wallet. Requires a wallet."""
-    return await _serialize(_require_service().trades())
+async def get_trades(limit: int = 100, compact: bool = True) -> dict[str, Any]:
+    """Trade history for the configured wallet, newest-first. Requires a wallet.
+
+    Bounded to `limit` trades. Compact by default (projects each fill to its
+    high-signal fields - id, market, asset_id, side, size, price, outcome,
+    status, match_time, fee_rate_bps, trader_side - dropping nested maker_orders,
+    hashes and owner ids); pass `compact=False` for the full fills.
+    """
+    return await _serialize(_require_service().trades(limit=limit, compact=compact))
 
 
 # --------------------------------------------------------------------------- #
@@ -589,6 +622,14 @@ async def place_order(
             tick_size=tick_size,
             neg_risk=neg_risk,
         )
+    except PydanticValidationError as exc:
+        # Summarize to "field: reason" pairs so the model gets an actionable
+        # message instead of pydantic's multi-line dump with doc URLs.
+        detail = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc']) or 'input'}: {e['msg']}"
+            for e in exc.errors()
+        )
+        return {"error": "validation_error", "detail": detail}
     except ValueError as exc:
         return {"error": "validation_error", "detail": str(exc)}
     return await _serialize(_require_service().place_order(req))

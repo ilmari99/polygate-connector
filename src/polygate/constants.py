@@ -15,6 +15,16 @@ DATA_HOST = "https://data-api.polymarket.com"
 # caller asking for more than 100 actually receives them.
 GAMMA_PAGE_LIMIT = 100
 
+# The CLOB ``/prices-history`` endpoint rejects a call with no time window
+# ("the time component is mandatory"), so a bare ``get_prices_history(token_id)``
+# would error. We default to this interval when the caller supplies neither an
+# ``interval`` nor a ``start_ts``/``end_ts`` window, and report the applied value
+# back so the caller knows the span it received. A wide interval also needs a
+# ``fidelity`` (the CLOB enforces a minimum for it), so we pair the default with
+# an hourly resolution that both satisfies that floor and keeps the series small.
+DEFAULT_PRICES_HISTORY_INTERVAL = "1w"
+DEFAULT_PRICES_HISTORY_FIDELITY = 60  # minutes (hourly)
+
 # Safety valve for ``collect_markets``: the most events a single scoped flatten
 # will page through before failing loud. Gamma has no server-side filter for
 # per-event attributes (e.g. a sports ``gameId``), so gathering a group means

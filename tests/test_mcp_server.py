@@ -55,6 +55,9 @@ class _FakeService:
             source="gamma",
         )
 
+    async def trades(self, **params):
+        return ResponseEnvelope.of({"echo": params, "trades": [{"id": "t1"}]}, source="clob")
+
 
 @pytest.fixture
 def fake_service():
@@ -109,6 +112,23 @@ async def test_place_order_validation_error(fake_service):
     # GTC order without a price is rejected before any upstream call.
     result = await mcp_server.place_order(token_id="111", side="BUY", size=5)
     assert result["error"] == "validation_error"
+
+
+async def test_place_order_validation_error_is_sanitized(fake_service):
+    # An out-of-range price must not leak pydantic's raw dump / doc URLs.
+    result = await mcp_server.place_order(
+        token_id="111", side="BUY", size=5, price=1.5
+    )
+    assert result["error"] == "validation_error"
+    detail = result["detail"]
+    assert "price" in detail
+    assert "pydantic.dev" not in detail and "For further information" not in detail
+
+
+async def test_get_trades_passes_limit_and_compact(fake_service):
+    result = await mcp_server.get_trades(limit=5)
+    assert result["source"] == "clob"
+    assert result["data"]["echo"] == {"limit": 5, "compact": True}
 
 
 async def test_place_order_dry_run_is_simulated():
