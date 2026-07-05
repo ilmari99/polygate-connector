@@ -92,7 +92,7 @@ Install the two command-line dependencies:
 | --- | --- | --- |
 | macOS | `brew install uv` or the installer above | `brew install cloudflared` |
 | Windows | `winget install --id=astral-sh.uv -e` | `winget install --id Cloudflare.cloudflared` |
-| Linux | `curl -LsSf https://astral.sh/uv/install.sh | sh` | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
+| Linux | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
 
 Then run:
 
@@ -110,16 +110,38 @@ Client secret / OAuth secret: pg_secret_...   (treat this like a password)
 Mode:                         RESEARCH ONLY
 ```
 
-In your web AI's custom connector screen, paste:
+In your web AI's custom connector screen, paste the card's **MCP URL**,
+**Client ID**, and **Client secret**:
 
 - **ChatGPT**: enable developer/custom connectors, add an MCP server, then use
   the card's **MCP URL** as the server URL and the **Client ID** / **Client
   secret** as the user-defined OAuth client.
-- **Claude**: add a custom connector with the card's **MCP URL**. Claude can use
-  the OAuth discovery endpoints; if it asks for manual credentials, paste the
-  **Client ID** and **Client secret**.
+- **Claude**: follow the step-by-step walkthrough below.
 - **Grok**: create a custom remote MCP connector, paste the **MCP URL**, and use
   the card's **Client ID** and **Client secret** for OAuth.
+
+#### Add PolyGate to Claude (web)
+
+Keep the `polygate connect` terminal open so its connection card stays visible,
+then in [claude.ai](https://claude.ai):
+
+1. Click the **+** button at the bottom-left of the chat box, then choose
+   **Connectors → Add connector → Add custom connector**.
+
+   ![Claude: + menu → Connectors → Add connector → Add custom connector](assets/connectors-add-custom.png)
+
+2. In the dialog, paste the three values from the connection card: the **MCP URL**
+   (e.g. `https://random.trycloudflare.com/mcp`) as the server URL, and the
+   **Client ID** and **Client secret** as the OAuth client credentials. Save.
+
+3. Open the **+** menu again and choose **Connectors → Manage connectors**, then
+   click **Connect** next to **polygate**. Claude opens the authorization page —
+   click **Authorize** to finish.
+
+   ![Claude: Manage connectors → Connect polygate](assets/connectors-manage-connect.png)
+
+PolyGate's research tools now appear in Claude. If you enabled trading, the
+place/cancel-order tools appear too.
 
 The command runs until Ctrl-C, which stops the tunnel and disconnects the web AI.
 Re-running reuses the same OAuth credentials; use `--new-credentials` to rotate
