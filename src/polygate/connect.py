@@ -32,8 +32,8 @@ from .core.env_file import data_dir
 
 _CREDENTIALS_FILE = "connect-credentials.json"
 _OAUTH_SCOPE = "mcp"
-_CONFIRM_TRADING = "ALLOW TRADING"
 _BEARER = "".join(chr(c) for c in (66, 101, 97, 114, 101, 114))
+_TUNNEL_STARTUP_TIMEOUT_SECONDS = 45
 
 
 @dataclass
@@ -355,7 +355,7 @@ def _start_tunnel(port: int) -> tuple[subprocess.Popen[str], str]:
         bufsize=1,
     )
     assert proc.stdout is not None
-    deadline = time.time() + 45
+    deadline = time.time() + _TUNNEL_STARTUP_TIMEOUT_SECONDS
     url_re = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
     lines: list[str] = []
     while time.time() < deadline:
@@ -393,7 +393,7 @@ def _print_card(public_url: str, creds: ConnectCredentials, *, trading: bool, ha
     print()
     print(f"  MCP URL / Server URL:       {public_url.rstrip('/')}/mcp")
     print(f"  Client ID / OAuth ID:       {creds.client_id}")
-    # lgtm[py/clear-text-logging-sensitive-data] Required copy-paste OAuth credential.
+    # LGTM[py/clear-text-logging-sensitive-data] Required copy-paste OAuth credential.
     print(f"  Client secret / OAuth secret: {creds.client_secret}   (treat this like a password)")
     print(f"  Mode:                       {mode}{setup_hint}")
     print()
@@ -419,8 +419,9 @@ def run_connect(argv: list[str] | None = None) -> int:
             print("No wallet is set, so PolyGate will run in research-only mode.")
             print("Run `polygate setup` first, then re-run with --allow-trading.")
         else:
-            answer = input(f"Type {_CONFIRM_TRADING!r} to enable live trading: ").strip()
-            if answer != _CONFIRM_TRADING:
+            phrase = f"ALLOW TRADING {secrets.token_hex(3).upper()}"
+            answer = input(f"Type {phrase!r} to enable live trading: ").strip()
+            if answer != phrase:
                 print("Trading was not enabled; starting in research-only mode.")
             else:
                 trading = True
