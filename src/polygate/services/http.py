@@ -56,16 +56,15 @@ class HttpClient:
             resp = await _do()
         except httpx.HTTPStatusError as exc:
             raise UpstreamError(
-                f"{source} returned {exc.response.status_code}", code=f"{source}_error"
+                f"{source} returned {exc.response.status_code}"
             ) from exc
         except httpx.HTTPError as exc:
-            raise UpstreamError(f"{source} request failed: {exc}", code=f"{source}_error") from exc
+            raise UpstreamError(f"{source} request failed: {exc}") from exc
 
         if resp.status_code >= 400:
             log.warning("%s %s -> %s", source, url, resp.status_code)
             raise UpstreamError(
                 f"{source} returned {resp.status_code}: {resp.text[:200]}",
-                code=f"{source}_error",
                 status_code=502 if resp.status_code >= 500 else resp.status_code,
             )
         try:

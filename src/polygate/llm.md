@@ -165,11 +165,11 @@ result keeps you from rewriting it after; prune stale or contradicted notes.
 Call each tool for its own argument and return-value docs. Grouped by use:
 
 - **Discover** — `list_markets`, `list_events`, `list_tags`, `get_market`,
-  `get_event`, `list_series`, `collect_markets`, `search`. Pass
-  `compact=true` to scan many markets cheaply; `limit` pages past Polymarket's
-  100-row cap automatically. Markets carry `liquidity`, `volume24hr`/`volume`,
-  `endDate`, and `description`/`resolutionSource` (the exact resolution criteria —
-  read it).
+  `get_event`, `list_series`, `collect_markets`, `search`. These return compact
+  rows by default (low-signal fields dropped); pass `compact=false` for the full
+  objects. `limit` pages past Polymarket's 100-row cap automatically. Markets
+  carry `liquidity`, `volume24hr`/`volume`, `endDate`, and
+  `description`/`resolutionSource` (the exact resolution criteria — read it).
   Structure: a **market** is the atomic tradable (`conditionId`, `clobTokenIds`);
   an **event** groups markets; **tags** (categories) and **series** (recurring or
   multi-part sets — each Fed decision, a monthly BTC strike ladder, a tournament's

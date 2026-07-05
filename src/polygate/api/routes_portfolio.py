@@ -14,10 +14,11 @@ router = APIRouter(tags=["portfolio"], dependencies=[Depends(require_api_key)])
 @router.get("/portfolio/positions")
 async def positions(
     limit: int = Query(default=100, ge=1, le=500),
+    compact: bool = Query(default=True, description="Drop the icon url. Set false for every field."),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Open positions for the configured wallet (Data API)."""
-    return await service.positions(limit=limit)
+    return await service.positions(limit=limit, compact=compact)
 
 
 @router.get("/portfolio/value")
@@ -38,9 +39,13 @@ async def balance(
 @router.get("/activity")
 async def activity(
     limit: int = Query(default=100, ge=1, le=500),
+    compact: bool = Query(
+        default=True,
+        description="Drop the wallet's own profile/identity noise. Set false for every field.",
+    ),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
-    return await service.activity(limit=limit)
+    return await service.activity(limit=limit, compact=compact)
 
 
 @router.get("/orders")
@@ -60,6 +65,13 @@ async def open_orders(
 
 
 @router.get("/trades")
-async def trades(service=Depends(get_service)) -> ResponseEnvelope:
+async def trades(
+    limit: int = Query(default=100, ge=1, le=1000),
+    compact: bool = Query(
+        default=True,
+        description="Project each fill to high-signal fields. Set false for full fills.",
+    ),
+    service=Depends(get_service),
+) -> ResponseEnvelope:
     """Trade history for the configured wallet (authenticated CLOB)."""
-    return await service.trades()
+    return await service.trades(limit=limit, compact=compact)

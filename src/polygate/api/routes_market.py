@@ -29,8 +29,8 @@ async def list_markets(
     order: str | None = None,
     ascending: bool | None = None,
     compact: bool = Query(
-        default=False,
-        description="Drop low-signal fields (descriptions, images, AMM internals).",
+        default=True,
+        description="Drop low-signal fields (descriptions, images, AMM internals). Set false for full objects.",
     ),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
@@ -50,7 +50,7 @@ async def list_markets(
 @router.get("/{condition_id}")
 async def get_market(
     condition_id: str,
-    compact: bool = Query(default=False, description="Drop low-signal fields."),
+    compact: bool = Query(default=True, description="Drop low-signal fields. Set false for the full object."),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     return await service.get_market(condition_id, compact=compact)
@@ -78,8 +78,8 @@ async def list_events(
     offset: int = Query(default=0, ge=0),
     order: str | None = None,
     compact: bool = Query(
-        default=False,
-        description="Drop low-signal fields (descriptions, images, AMM internals).",
+        default=True,
+        description="Drop low-signal fields (descriptions, images, AMM internals). Set false for full objects.",
     ),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
@@ -98,7 +98,7 @@ async def list_events(
 @events_router.get("/events/{key}")
 async def get_event(
     key: str,
-    compact: bool = Query(default=False, description="Drop low-signal fields."),
+    compact: bool = Query(default=True, description="Drop low-signal fields. Set false for the full object."),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Fetch a single event (with its nested markets) by slug or event id."""
@@ -110,7 +110,7 @@ async def get_event(
 async def list_series(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
-    compact: bool = Query(default=False, description="Drop low-signal fields."),
+    compact: bool = Query(default=True, description="Drop low-signal fields. Set false for full objects."),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Catalog of series; each carries an ``event_count`` (drill in with list_events?series_id=)."""
@@ -131,7 +131,7 @@ async def collect_markets(
     ),
     active: bool | None = Query(default=True),
     closed: bool | None = Query(default=False),
-    compact: bool = Query(default=False, description="Drop low-signal fields."),
+    compact: bool = Query(default=True, description="Drop low-signal fields. Set false for full objects."),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Flatten every atomic market under one scope (series, tag, or event) into a list.
@@ -195,17 +195,24 @@ async def search(
     page: int | None = Query(default=None, ge=1),
     events_status: str | None = Query(default=None, description="e.g. 'active', 'resolved'."),
     compact: bool = Query(
+        default=True,
+        description="Drop low-signal fields (descriptions, images, AMM internals). Set false for full objects.",
+    ),
+    flatten: bool = Query(
         default=False,
-        description="Drop low-signal fields (descriptions, images, AMM internals).",
+        description=(
+            "Also return a flat top-level `markets` array tagged with parent "
+            "event context. Off by default: it duplicates every nested market."
+        ),
     ),
     service=Depends(get_service),
 ) -> ResponseEnvelope:
     """Full-text search across Polymarket events and markets (Gamma).
 
     Gamma groups markets under events, so token ids live at
-    ``events[].markets[].clobTokenIds``. The response also carries a flat
-    top-level ``markets`` array (each entry tagged with its parent
-    ``event_id``/``event_title``) so callers can read ``clobTokenIds`` directly.
+    ``events[].markets[].clobTokenIds`` (decoded to arrays). Pass ``flatten=true``
+    to also get a flat top-level ``markets`` array, each entry tagged with its
+    parent ``event_id``/``event_title``/``event_slug``.
     """
     return await service.search(
         q,
@@ -213,6 +220,7 @@ async def search(
         page=page,
         events_status=events_status,
         compact=compact,
+        flatten=flatten,
     )
 
 

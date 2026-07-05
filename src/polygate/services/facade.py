@@ -11,7 +11,12 @@ from __future__ import annotations
 from typing import Any
 
 from ..config import Settings
-from ..constants import GAMMA_PAGE_LIMIT, MARKET_SCAN_MAX_EVENTS
+from ..constants import (
+    DEFAULT_PRICES_HISTORY_FIDELITY,
+    DEFAULT_PRICES_HISTORY_INTERVAL,
+    GAMMA_PAGE_LIMIT,
+    MARKET_SCAN_MAX_EVENTS,
+)
 from ..core.errors import ConfigurationError, NotFoundError, UpstreamError, ValidationError
 from ..core.logging import audit
 from ..models.common import ResponseEnvelope
@@ -19,11 +24,16 @@ from ..models.order import CancelResult, OrderResult, PlaceOrderRequest
 from .http import HttpClient
 from .trading import TradingService
 from .transform import (
+    clean_activity,
+    clean_balance,
     clean_event,
     clean_events,
+    clean_market,
     clean_markets,
+    clean_positions,
     clean_search,
     clean_series_list,
+    clean_trades,
     summarize_order_book,
 )
 
@@ -116,7 +126,7 @@ class PolymarketService:
         offset: int = 0,
         order: str | None = None,
         ascending: bool | None = None,
-        compact: bool = False,
+        compact: bool = True,
     ) -> ResponseEnvelope:
         """List markets, or fetch a single market by ``slug`` when given."""
         if slug:
@@ -138,11 +148,24 @@ class PolymarketService:
             )
         return ResponseEnvelope.of(clean_markets(data, compact=compact), source="gamma")
 
-    async def get_market(self, condition_id: str, *, compact: bool = False) -> ResponseEnvelope:
+    async def get_market(self, condition_id: str, *, compact: bool = True) -> ResponseEnvelope:
+        """Fetch a single market by ``conditionId``, unwrapped to one object.
+
+        Gamma's ``/markets?condition_ids=`` always returns a list; a caller asking
+        for one market wants the object, not a 1-element array. We unwrap it and
+        raise :class:`NotFoundError` when the id resolves to nothing, so a bad id
+        fails loudly instead of returning an ambiguous empty list.
+        """
         data = await self._read(
             self._gamma_host, "/markets", "gamma", {"condition_ids": condition_id}
         )
-        return ResponseEnvelope.of(clean_markets(data, compact=compact), source="gamma")
+        market = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+        if market is None:
+            raise NotFoundError(
+                f"No market found for condition_id={condition_id!r}. Pass a market "
+                "conditionId (0x...), e.g. from a search or list_markets result."
+            )
+        return ResponseEnvelope.of(clean_market(market, compact=compact), source="gamma")
 
     async def list_events(
         self,
@@ -154,7 +177,7 @@ class PolymarketService:
         limit: int = 50,
         offset: int = 0,
         order: str | None = None,
-        compact: bool = False,
+        compact: bool = True,
     ) -> ResponseEnvelope:
         """List events; ``tag_id``/``series_id`` drill into a category or series."""
         data = await self._read_paged(
@@ -188,13 +211,13 @@ class PolymarketService:
             "(e.g. from a search or list_events result)."
         )
 
-    async def get_event(self, key: str, *, compact: bool = False) -> ResponseEnvelope:
+    async def get_event(self, key: str, *, compact: bool = True) -> ResponseEnvelope:
         """Fetch a single event (with its nested markets) by slug or event id."""
         event = await self._resolve_event(key)
         return ResponseEnvelope.of(clean_event(event, compact=compact), source="gamma")
 
     async def list_series(
-        self, *, limit: int = 100, offset: int = 0, compact: bool = False
+        self, *, limit: int = 100, offset: int = 0, compact: bool = True
     ) -> ResponseEnvelope:
         """List series - the recurring/multi-part groupings of events.
 
@@ -229,7 +252,7 @@ class PolymarketService:
                  "limit": GAMMA_PAGE_LIMIT, "offset": cursor},
             )
             if not isinstance(page, list):
-                raise UpstreamError("gamma returned a non-list response while paging /events", code="gamma_error")
+                raise UpstreamError("gamma returned a non-list response while paging /events")
             collected.extend(e for e in page if isinstance(e, dict))
             if len(page) < GAMMA_PAGE_LIMIT:
                 break
@@ -250,7 +273,7 @@ class PolymarketService:
         group_by: str | None = None,
         active: bool | None = True,
         closed: bool | None = False,
-        compact: bool = False,
+        compact: bool = True,
     ) -> ResponseEnvelope:
         """Flatten every atomic market under one grouping node into a flat list.
 
@@ -348,6 +371,19 @@ class PolymarketService:
         end_ts: int | None = None,
         fidelity: int | None = None,
     ) -> ResponseEnvelope:
+        """Historical price series for an outcome token.
+
+        The CLOB endpoint requires a time window: when the caller supplies neither
+        an ``interval`` nor a ``start_ts``/``end_ts`` pair we default to
+        :data:`DEFAULT_PRICES_HISTORY_INTERVAL` (rather than erroring on the bare
+        call), pair it with :data:`DEFAULT_PRICES_HISTORY_FIDELITY` (a wide range
+        needs a fidelity floor), and echo the applied ``interval`` into the
+        payload so the caller knows the span it received.
+        """
+        if interval is None and start_ts is None and end_ts is None:
+            interval = DEFAULT_PRICES_HISTORY_INTERVAL
+            if fidelity is None:
+                fidelity = DEFAULT_PRICES_HISTORY_FIDELITY
         data = await self._read(
             self._clob_host,
             "/prices-history",
@@ -360,6 +396,8 @@ class PolymarketService:
                 "fidelity": fidelity,
             },
         )
+        if interval is not None and isinstance(data, dict):
+            data = {**data, "interval": interval}
         return ResponseEnvelope.of(data, source="clob")
 
     # --- Research ---
@@ -370,9 +408,18 @@ class PolymarketService:
         limit_per_type: int | None = None,
         page: int | None = None,
         events_status: str | None = None,
-        compact: bool = False,
+        compact: bool = True,
+        flatten: bool = False,
     ) -> ResponseEnvelope:
-        """Full-text search; also surfaces a flat ``markets`` list (see ``_flatten_search``)."""
+        """Full-text search; optionally surface a flat ``markets`` list.
+
+        Results group under ``events`` whose nested markets already carry decoded
+        ``clobTokenIds``. The raw payload has no top-level ``markets`` array; when
+        ``flatten`` is set we synthesize one (see ``_flatten_search``), each entry
+        tagged with its parent ``event_id``/``event_title``/``event_slug``. It is
+        off by default because it duplicates every nested market and roughly
+        doubles an already-large payload.
+        """
         data = await self._read(
             self._gamma_host,
             "/public-search",
@@ -384,7 +431,9 @@ class PolymarketService:
                 "events_status": events_status,
             },
         )
-        cleaned = clean_search(_flatten_search(data), compact=compact)
+        if flatten:
+            data = _flatten_search(data)
+        cleaned = clean_search(data, compact=compact)
         return ResponseEnvelope.of(cleaned, source="gamma")
 
     async def comments(
@@ -418,11 +467,11 @@ class PolymarketService:
         return ResponseEnvelope.of(data, source="data")
 
     # --- Portfolio / account (require a configured wallet) ---
-    async def positions(self, *, limit: int = 100) -> ResponseEnvelope:
+    async def positions(self, *, limit: int = 100, compact: bool = True) -> ResponseEnvelope:
         data = await self._read(
             self._data_host, "/positions", "data", {"user": self.require_funder(), "limit": limit}
         )
-        return ResponseEnvelope.of(data, source="data")
+        return ResponseEnvelope.of(clean_positions(data, compact=compact), source="data")
 
     async def portfolio_value(self) -> ResponseEnvelope:
         data = await self._read(
@@ -432,13 +481,13 @@ class PolymarketService:
 
     async def balance(self, *, token_id: str | None = None) -> ResponseEnvelope:
         data = await self.trading().balance_allowance(conditional_token_id=token_id)
-        return ResponseEnvelope.of(data, source="clob")
+        return ResponseEnvelope.of(clean_balance(data), source="clob")
 
-    async def activity(self, *, limit: int = 100) -> ResponseEnvelope:
+    async def activity(self, *, limit: int = 100, compact: bool = True) -> ResponseEnvelope:
         data = await self._read(
             self._data_host, "/activity", "data", {"user": self.require_funder(), "limit": limit}
         )
-        return ResponseEnvelope.of(data, source="data")
+        return ResponseEnvelope.of(clean_activity(data, compact=compact), source="data")
 
     async def open_orders(
         self, *, market: str | None = None, asset_id: str | None = None
@@ -446,9 +495,19 @@ class PolymarketService:
         data = await self.trading().open_orders(market=market, asset_id=asset_id)
         return ResponseEnvelope.of(data, source="clob")
 
-    async def trades(self) -> ResponseEnvelope:
+    async def trades(self, *, limit: int = 100, compact: bool = True) -> ResponseEnvelope:
+        """Authenticated CLOB trade history, newest-first, bounded and cleaned.
+
+        The upstream returns the full history with per-fill plumbing (nested
+        ``maker_orders``, hashes, owner ids) that can run to tens of thousands of
+        tokens. We cap it to ``limit`` and, in compact mode, project each trade to
+        its high-signal fields so a routine "how did my trades go?" can't blow up
+        the caller's context.
+        """
         data = await self.trading().trades()
-        return ResponseEnvelope.of(data, source="clob")
+        if isinstance(data, list):
+            data = data[:limit]
+        return ResponseEnvelope.of(clean_trades(data, compact=compact), source="clob")
 
     # --- Actions (dry-run aware) ---
     async def place_order(self, req: PlaceOrderRequest) -> OrderResult:

@@ -158,7 +158,7 @@ class TradingService:
                 self._client.create_and_post_order, order_args, options, sdk_order_type
             )
         except Exception as exc:  # SDK raises various exception types
-            raise UpstreamError(_upstream_message("Order rejected", exc), code="clob_error") from exc
+            raise UpstreamError(_upstream_message("Order rejected", exc)) from exc
         return _to_plain(resp)
 
     async def cancel_order(self, order_id: str) -> Any:
@@ -167,14 +167,14 @@ class TradingService:
                 self._client.cancel_order, OrderPayload(orderID=order_id)
             )
         except Exception as exc:
-            raise UpstreamError(_upstream_message("Cancel failed", exc), code="clob_error") from exc
+            raise UpstreamError(_upstream_message("Cancel failed", exc)) from exc
         return _to_plain(resp)
 
     async def cancel_all(self) -> Any:
         try:
             resp = await asyncio.to_thread(self._client.cancel_all)
         except Exception as exc:
-            raise UpstreamError(_upstream_message("Cancel-all failed", exc), code="clob_error") from exc
+            raise UpstreamError(_upstream_message("Cancel-all failed", exc)) from exc
         return _to_plain(resp)
 
     async def _resolve_options(self, req: PlaceOrderRequest) -> PartialCreateOrderOptions:
