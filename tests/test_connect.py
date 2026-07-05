@@ -99,6 +99,7 @@ def test_connect_dispatch_prints_connection_card(
 
     class _Tunnel:
         def poll(self):
+            """Mimic subprocess.Popen.poll(): return exit code or None."""
             return 0
 
     monkeypatch.setattr("polygate.connect._start_uvicorn", lambda *a, **k: (_Server(), None))

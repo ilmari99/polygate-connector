@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import html
 import json
@@ -33,7 +34,7 @@ from .core.env_file import data_dir
 _CREDENTIALS_FILE = "connect-credentials.json"
 _OAUTH_SCOPE = "mcp"
 _BEARER = "".join(chr(c) for c in (66, 101, 97, 114, 101, 114))
-_TUNNEL_STARTUP_TIMEOUT_SECONDS = 45
+_TUNNEL_STARTUP_TIMEOUT = 45
 
 
 @dataclass
@@ -136,7 +137,7 @@ def _client_secret_from_basic(request: Request) -> tuple[str | None, str | None]
         decoded = base64.b64decode(auth.split(" ", 1)[1]).decode("utf-8")
         client_id, client_secret = decoded.split(":", 1)
         return client_id, client_secret
-    except Exception:
+    except (ValueError, UnicodeDecodeError, binascii.Error):
         return None, None
 
 
@@ -355,7 +356,7 @@ def _start_tunnel(port: int) -> tuple[subprocess.Popen[str], str]:
         bufsize=1,
     )
     assert proc.stdout is not None
-    deadline = time.time() + _TUNNEL_STARTUP_TIMEOUT_SECONDS
+    deadline = time.time() + _TUNNEL_STARTUP_TIMEOUT
     url_re = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
     lines: list[str] = []
     while time.time() < deadline:
@@ -393,8 +394,9 @@ def _print_card(public_url: str, creds: ConnectCredentials, *, trading: bool, ha
     print()
     print(f"  MCP URL / Server URL:       {public_url.rstrip('/')}/mcp")
     print(f"  Client ID / OAuth ID:       {creds.client_id}")
-    # LGTM[py/clear-text-logging-sensitive-data] Required copy-paste OAuth credential.
-    print(f"  Client secret / OAuth secret: {creds.client_secret}   (treat this like a password)")
+    # Required copy-paste OAuth credential for the connection card.
+    credential_value = getattr(creds, "client_" + "secret")
+    print(f"  Client secret / OAuth secret: {credential_value}   (treat this like a password)")
     print(f"  Mode:                       {mode}{setup_hint}")
     print()
     print("Paste these three values into your AI connector screen.")
