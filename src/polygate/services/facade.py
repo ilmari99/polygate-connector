@@ -229,7 +229,7 @@ class PolymarketService:
                  "limit": GAMMA_PAGE_LIMIT, "offset": cursor},
             )
             if not isinstance(page, list):
-                break
+                raise UpstreamError("gamma returned a non-list response while paging /events", code="gamma_error")
             collected.extend(e for e in page if isinstance(e, dict))
             if len(page) < GAMMA_PAGE_LIMIT:
                 break
