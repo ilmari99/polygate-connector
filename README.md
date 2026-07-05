@@ -92,7 +92,7 @@ Install the two command-line dependencies:
 | --- | --- | --- |
 | macOS | `brew install uv` or the installer above | `brew install cloudflared` |
 | Windows | `winget install --id=astral-sh.uv -e` | `winget install --id Cloudflare.cloudflared` |
-| Linux | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
+| Linux | `curl -LsSf https://astral.sh/uv/install.sh | sh` | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
 
 Then run:
 

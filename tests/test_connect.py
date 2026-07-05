@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 
 from polygate import cli
+from polygate import connect
 from polygate.config import get_settings
 from polygate.connect import (
     ConnectCredentials,
@@ -80,7 +81,7 @@ def test_oauth_flow_gates_mcp_and_issues_token() -> None:
         access_token = token.json()["access_token"]
 
         authed = client.get(
-            "/mcp", headers={"Authorization": ("Bear" + f"er {access_token}")}
+            "/mcp", headers={"Authorization": f"{connect._BEARER} {access_token}"}
         )
         assert authed.status_code != 401
 

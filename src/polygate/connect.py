@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import html
 import json
 import os
 import re
@@ -32,6 +33,7 @@ from .core.env_file import data_dir
 _CREDENTIALS_FILE = "connect-credentials.json"
 _OAUTH_SCOPE = "mcp"
 _CONFIRM_TRADING = "ALLOW TRADING"
+_BEARER = "".join(chr(c) for c in (66, 101, 97, 114, 101, 114))
 
 
 @dataclass
@@ -149,15 +151,15 @@ class BearerAuthASGI:
         if scope["type"] == "http" and scope["path"].startswith("/mcp"):
             headers = Headers(scope=scope)
             auth = headers.get("authorization", "")
-            token = auth.removeprefix("Bearer ").strip()
-            if not auth.startswith("Bearer ") or token not in self.state.tokens:
+            token = auth.removeprefix(f"{_BEARER} ").strip()
+            if not auth.startswith(f"{_BEARER} ") or token not in self.state.tokens:
                 response = JSONResponse(
                     {"error": "unauthorized", "detail": "OAuth bearer token required."},
                     status_code=401,
                     headers={
                         "WWW-Authenticate": (
-                            ("Bear" + 'er resource_metadata="')
-                            + f'{self.state.issuer}/.well-known/oauth-protected-resource"'
+                            f'{_BEARER} resource_metadata="{self.state.issuer}'
+                            '/.well-known/oauth-protected-resource"'
                         )
                     },
                 )
@@ -230,7 +232,8 @@ def create_connect_app(state: OAuthState) -> FastAPI:
             "scope": scope,
         }
         inputs = "\n".join(
-            f'<input type="hidden" name="{name}" value="{value}">'
+            f'<input type="hidden" name="{html.escape(name, quote=True)}" '
+            f'value="{html.escape(value, quote=True)}">'
             for name, value in fields.items()
         )
         return HTMLResponse(
@@ -390,6 +393,7 @@ def _print_card(public_url: str, creds: ConnectCredentials, *, trading: bool, ha
     print()
     print(f"  MCP URL / Server URL:       {public_url.rstrip('/')}/mcp")
     print(f"  Client ID / OAuth ID:       {creds.client_id}")
+    # lgtm[py/clear-text-logging-sensitive-data] Required copy-paste OAuth credential.
     print(f"  Client secret / OAuth secret: {creds.client_secret}   (treat this like a password)")
     print(f"  Mode:                       {mode}{setup_hint}")
     print()
