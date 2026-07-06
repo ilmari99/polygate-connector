@@ -91,13 +91,13 @@ research-only (search, prices, and market data need no wallet or keys). To let
 the web AI place real orders, connect your Polymarket wallet once:
 
 ```bash
-uvx --from git+https://github.com/ilmari99/polygate@v0.4.0 polygate setup
+uvx --from git+https://github.com/ilmari99/polygate@v0.5.0 polygate setup
 ```
 
 **Start the connector.** For research and reading only:
 
 ```bash
-uvx --from git+https://github.com/ilmari99/polygate@v0.4.0 polygate connect
+uvx --from git+https://github.com/ilmari99/polygate@v0.5.0 polygate connect
 ```
 
 If you connected a wallet above and want the AI to trade, add `--allow-trading`
@@ -105,7 +105,7 @@ If you connected a wallet above and want the AI to trade, add `--allow-trading`
 turns on):
 
 ```bash
-uvx --from git+https://github.com/ilmari99/polygate@v0.4.0 polygate connect --allow-trading
+uvx --from git+https://github.com/ilmari99/polygate@v0.5.0 polygate connect --allow-trading
 ```
 
 Either command starts a loopback MCP server, opens a temporary Cloudflare HTTPS
@@ -165,7 +165,7 @@ and read** markets — no Polymarket account or keys needed — paste this in:
   "mcpServers": {
     "polygate": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"]
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.5.0", "polygate-mcp"]
     }
   }
 }
@@ -187,7 +187,7 @@ orders on **your** Polymarket account, add an `env` block with two values from
   "mcpServers": {
     "polygate": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"],
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.5.0", "polygate-mcp"],
       "env": {
         "FUNDER_ADDRESS": "0xYourFundingAddress",
         "PRIVATE_KEY": "0xYourSignerPrivateKey"
@@ -315,7 +315,7 @@ Put this in `.vscode/mcp.json`, then reload the window:
     "polygate": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.4.0", "polygate-mcp"],
+      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.5.0", "polygate-mcp"],
       "env": {
         "FUNDER_ADDRESS": "0xYourFundingAddress",
         "PRIVATE_KEY": "0xYourSignerPrivateKey"
