@@ -27,7 +27,9 @@ Settings → Connectors → **Add custom connector**, then enter the server URL:
 https://mcp.polymarket4ai.com/mcp
 ```
 
-No authentication is required. Ask Claude things like:
+No authentication is required. The connector is in **public preview**: it is
+not yet listed in the Claude connector directory, so Claude asks for
+per-tool confirmation on first use ("Always allow" persists your choice). Ask Claude things like:
 
 1. *"What are the highest-volume Polymarket markets about the 2026 US midterms?"*
 2. *"Show me the order book and recent price history for the leading outcome."*

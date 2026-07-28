@@ -17,7 +17,7 @@ data involved.
 No test account is needed - the connector has no authentication.
 
 1. In Claude: Settings → Connectors → **Add custom connector**.
-2. URL: `https://<host>/mcp` (the URL provided in the submission).
+2. URL: `https://mcp.polymarket4ai.com/mcp`.
 3. Authentication: none.
 
 ## Test prompts (increasing depth)
