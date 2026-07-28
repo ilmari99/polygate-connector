@@ -60,6 +60,10 @@ def _configure_stderr_logging(level: str = "INFO") -> None:
     root.propagate = False
     # Block core.logging.configure_logging() from adding a stdout handler later.
     core_logging._CONFIGURED = True  # type: ignore[attr-defined]
+    # httpx/httpcore log full request URLs at INFO - including user query
+    # strings - which would violate the no-query-logging privacy promise.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _require_service() -> PolymarketService:

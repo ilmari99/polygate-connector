@@ -94,3 +94,14 @@ async def test_health_never_needs_the_service():
     # health must succeed with no service configured at all.
     result = await mcp_server.health()
     assert result["status"] == "ok"
+
+
+def test_http_client_loggers_cannot_leak_query_urls():
+    # httpx logs full request URLs (query strings included) at INFO; the
+    # logging setup must pin those loggers above INFO or the privacy
+    # policy's no-query-logging claim breaks.
+    import logging
+
+    mcp_server._configure_stderr_logging("INFO")
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
