@@ -24,7 +24,7 @@ wallet, use upstream `polygate` instead.
 Settings → Connectors → **Add custom connector**, then enter the server URL:
 
 ```
-https://<your-host>/mcp
+https://mcp.polymarket4ai.com/mcp
 ```
 
 No authentication is required. Ask Claude things like:
