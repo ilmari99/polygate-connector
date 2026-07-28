@@ -1,0 +1,12 @@
+[
+  {
+    "url": "https://clob.polymarket.com/last-trade-price",
+    "params": {
+      "token_id": "98022490269692409998126496127597032490334070080325855126491859374983463996227"
+    },
+    "response": {
+      "price": "0.51",
+      "side": "BUY"
+    }
+  }
+]
