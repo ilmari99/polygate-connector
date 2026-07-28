@@ -2,7 +2,9 @@
 
 It owns the upstream HTTP client and aggregates the public Polymarket read
 APIs (Gamma, CLOB, Data) behind one interface. Every operation is a
-side-effect-free read of public data.
+side-effect-free read of public data. List operations clamp their ``limit``
+server-side and return a :class:`ListPage` with pagination metadata; detail
+operations return a :class:`ResponseEnvelope`.
 """
 
 from __future__ import annotations
@@ -11,23 +13,55 @@ from typing import Any
 
 from ..config import Settings
 from ..constants import (
+    DEFAULT_LIST_LIMIT,
     DEFAULT_PRICES_HISTORY_FIDELITY,
     DEFAULT_PRICES_HISTORY_INTERVAL,
+    DEFAULT_WIDE_LIMIT,
     GAMMA_PAGE_LIMIT,
     MARKET_SCAN_MAX_EVENTS,
+    MAX_LIST_LIMIT,
 )
 from ..core.errors import NotFoundError, UpstreamError, ValidationError
-from ..models.common import ResponseEnvelope
+from ..models.common import ListPage, ResponseEnvelope
 from .http import HttpClient
 from .transform import (
+    Verbosity,
+    clean_comments,
     clean_event,
     clean_events,
     clean_market,
     clean_markets,
-    clean_search,
+    clean_search_events,
     clean_series_list,
+    clean_tags,
+    flatten_holders,
     summarize_order_book,
+    summarize_price_history,
 )
+
+
+def _clamp(limit: int) -> int:
+    """Bound a caller-supplied limit; the requesting model's number is untrusted."""
+    return max(1, min(limit, MAX_LIST_LIMIT))
+
+
+def _page(
+    rows: Any, source: str, *, limit: int, offset: int, clamped: bool
+) -> ListPage:
+    """Wrap list rows with pagination metadata.
+
+    A page as long as the requested ``limit`` means the upstream may have more;
+    a short page means it is exhausted.
+    """
+    if not isinstance(rows, list):
+        return ListPage.of(rows, source)
+    full_page = len(rows) >= limit
+    return ListPage.of(
+        rows,
+        source,
+        next_offset=offset + len(rows) if full_page else None,
+        truncated=full_page or clamped,
+    )
 
 
 class PolymarketService:
@@ -96,13 +130,15 @@ class PolymarketService:
         closed: bool | None = False,
         tag_id: int | None = None,
         slug: str | None = None,
-        limit: int = 50,
+        limit: int = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         order: str | None = None,
         ascending: bool | None = None,
-        compact: bool = True,
-    ) -> ResponseEnvelope:
+        verbosity: Verbosity = "minimal",
+    ) -> ListPage:
         """List markets, or fetch a single market by ``slug`` when given."""
+        clamped = limit > MAX_LIST_LIMIT
+        limit = _clamp(limit)
         if slug:
             data = await self._read(self._gamma_host, "/markets", "gamma", {"slug": slug})
         else:
@@ -120,9 +156,12 @@ class PolymarketService:
                 limit=limit,
                 offset=offset,
             )
-        return ResponseEnvelope.of(clean_markets(data, compact=compact), source="gamma")
+        rows = clean_markets(data, verbosity=verbosity)
+        return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)
 
-    async def get_market(self, condition_id: str, *, compact: bool = True) -> ResponseEnvelope:
+    async def get_market(
+        self, condition_id: str, *, verbosity: Verbosity = "compact"
+    ) -> ResponseEnvelope:
         """Fetch a single market by ``conditionId``, unwrapped to one object.
 
         Gamma's ``/markets?condition_ids=`` always returns a list; a caller asking
@@ -139,7 +178,7 @@ class PolymarketService:
                 f"No market found for condition_id={condition_id!r}. Pass a market "
                 "conditionId (0x...), e.g. from a search or list_markets result."
             )
-        return ResponseEnvelope.of(clean_market(market, compact=compact), source="gamma")
+        return ResponseEnvelope.of(clean_market(market, verbosity=verbosity), source="gamma")
 
     async def list_events(
         self,
@@ -148,12 +187,19 @@ class PolymarketService:
         closed: bool | None = False,
         tag_id: int | None = None,
         series_id: int | None = None,
-        limit: int = 50,
+        limit: int = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         order: str | None = None,
-        compact: bool = True,
-    ) -> ResponseEnvelope:
-        """List events; ``tag_id``/``series_id`` drill into a category or series."""
+        verbosity: Verbosity = "minimal",
+    ) -> ListPage:
+        """List events; ``tag_id``/``series_id`` drill into a category or series.
+
+        Below ``full`` verbosity each row carries a ``market_count`` and its top
+        markets by liquidity instead of every nested market; ``get_event``
+        returns the rest.
+        """
+        clamped = limit > MAX_LIST_LIMIT
+        limit = _clamp(limit)
         data = await self._read_paged(
             self._gamma_host,
             "/events",
@@ -168,7 +214,8 @@ class PolymarketService:
             limit=limit,
             offset=offset,
         )
-        return ResponseEnvelope.of(clean_events(data, compact=compact), source="gamma")
+        rows = clean_events(data, verbosity=verbosity, for_list=True)
+        return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)
 
     async def _resolve_event(self, key: str) -> dict[str, Any]:
         """Resolve one event by slug or event id (a numeric ``key`` is an id).
@@ -185,24 +232,28 @@ class PolymarketService:
             "(e.g. from a search or list_events result)."
         )
 
-    async def get_event(self, key: str, *, compact: bool = True) -> ResponseEnvelope:
+    async def get_event(self, key: str, *, verbosity: Verbosity = "compact") -> ResponseEnvelope:
         """Fetch a single event (with its nested markets) by slug or event id."""
         event = await self._resolve_event(key)
-        return ResponseEnvelope.of(clean_event(event, compact=compact), source="gamma")
+        return ResponseEnvelope.of(clean_event(event, verbosity=verbosity), source="gamma")
 
     async def list_series(
-        self, *, limit: int = 100, offset: int = 0, compact: bool = True
-    ) -> ResponseEnvelope:
+        self, *, limit: int = DEFAULT_WIDE_LIMIT, offset: int = 0, verbosity: Verbosity = "minimal"
+    ) -> ListPage:
         """List series - the recurring/multi-part groupings of events.
 
         A lightweight catalog: each series' heavy embedded ``events`` array is
-        replaced with an ``event_count``. Drill in with ``list_events(series_id=...)``
-        (its events) or ``collect_markets(series_id=...)`` (its flat markets).
+        replaced with an ``event_count``. Drill into a series with
+        ``list_events(series_id=...)`` or flatten it with
+        ``collect_markets(series_id=...)``.
         """
+        clamped = limit > MAX_LIST_LIMIT
+        limit = _clamp(limit)
         data = await self._read_paged(
             self._gamma_host, "/series", "gamma", {}, limit=limit, offset=offset
         )
-        return ResponseEnvelope.of(clean_series_list(data, compact=compact), source="gamma")
+        rows = clean_series_list(data, verbosity=verbosity)
+        return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)
 
     async def _scan_events(
         self, filters: dict[str, Any], *, active: bool | None, closed: bool | None
@@ -247,7 +298,7 @@ class PolymarketService:
         group_by: str | None = None,
         active: bool | None = True,
         closed: bool | None = False,
-        compact: bool = True,
+        verbosity: Verbosity = "minimal",
     ) -> ResponseEnvelope:
         """Flatten every atomic market under one grouping node into a flat list.
 
@@ -264,9 +315,9 @@ class PolymarketService:
 
         Returns a flat ``markets`` list, each entry tagged with its parent
         ``event_id``/``event_title``/``event_slug`` so a caller reads every
-        ``conditionId`` and ``clobTokenIds`` directly. The underlying series/tag
-        scan runs to completion (never truncated) and fails loud if the scope is
-        too broad, so the result is complete or an error - never silently partial.
+        ``conditionId`` directly. The underlying series/tag scan runs to
+        completion (never truncated) and fails loud if the scope is too broad,
+        so the result is complete or an error - never silently partial.
         """
         chosen = [(n, v) for n, v in
                   (("series_id", series_id), ("tag_id", tag_id), ("event", event))
@@ -315,20 +366,20 @@ class PolymarketService:
             "scope": scope,
             "event_count": len(events),
             "markets": _flatten_search(
-                {"events": [clean_event(e, compact=compact) for e in events]}
+                {"events": [clean_event(e, verbosity=verbosity) for e in events]}
             )["markets"],
         }
         payload["market_count"] = len(payload["markets"])
         return ResponseEnvelope.of(payload, source="gamma")
 
-    async def list_tags(self) -> ResponseEnvelope:
+    async def list_tags(self, *, verbosity: Verbosity = "minimal") -> ListPage:
         data = await self._read(self._gamma_host, "/tags", "gamma")
-        return ResponseEnvelope.of(data, source="gamma")
+        return ListPage.of(clean_tags(data, verbosity=verbosity), "gamma")
 
     # --- CLOB book / prices (keyed by outcome token id) ---
-    async def order_book(self, token_id: str) -> ResponseEnvelope:
+    async def order_book(self, token_id: str, *, full: bool = False) -> ResponseEnvelope:
         data = await self._read(self._clob_host, "/book", "clob", {"token_id": token_id})
-        return ResponseEnvelope.of(summarize_order_book(data), source="clob")
+        return ResponseEnvelope.of(summarize_order_book(data, full=full), source="clob")
 
     async def last_trade_price(self, token_id: str) -> ResponseEnvelope:
         data = await self._read(
@@ -344,15 +395,17 @@ class PolymarketService:
         start_ts: int | None = None,
         end_ts: int | None = None,
         fidelity: int | None = None,
+        raw: bool = False,
     ) -> ResponseEnvelope:
-        """Historical price series for an outcome token.
+        """Historical price series for an outcome token, summarized by default.
 
         The CLOB endpoint requires a time window: when the caller supplies neither
         an ``interval`` nor a ``start_ts``/``end_ts`` pair we default to
         :data:`DEFAULT_PRICES_HISTORY_INTERVAL` (rather than erroring on the bare
         call), pair it with :data:`DEFAULT_PRICES_HISTORY_FIDELITY` (a wide range
         needs a fidelity floor), and echo the applied ``interval`` into the
-        payload so the caller knows the span it received.
+        payload so the caller knows the span it received. The point series is
+        collapsed to a window summary unless ``raw`` is set.
         """
         if interval is None and start_ts is None and end_ts is None:
             interval = DEFAULT_PRICES_HISTORY_INTERVAL
@@ -370,6 +423,8 @@ class PolymarketService:
                 "fidelity": fidelity,
             },
         )
+        if not raw:
+            data = summarize_price_history(data)
         if interval is not None and isinstance(data, dict):
             data = {**data, "interval": interval}
         return ResponseEnvelope.of(data, source="clob")
@@ -382,18 +437,16 @@ class PolymarketService:
         limit_per_type: int | None = None,
         page: int | None = None,
         events_status: str | None = None,
-        compact: bool = True,
-        flatten: bool = False,
-    ) -> ResponseEnvelope:
-        """Full-text search; optionally surface a flat ``markets`` list.
+        verbosity: Verbosity = "minimal",
+    ) -> ListPage:
+        """Full-text search over Polymarket events.
 
-        Results group under ``events`` whose nested markets already carry decoded
-        ``clobTokenIds``. The raw payload has no top-level ``markets`` array; when
-        ``flatten`` is set we synthesize one (see ``_flatten_search``), each entry
-        tagged with its parent ``event_id``/``event_title``/``event_slug``. It is
-        off by default because it duplicates every nested market and roughly
-        doubles an already-large payload.
+        Returns the matching events as rows; below ``full`` verbosity each row
+        carries a ``market_count`` and its top markets by liquidity instead of
+        every nested market. ``limit_per_type`` bounds the number of events.
         """
+        clamped = (limit_per_type or 0) > MAX_LIST_LIMIT
+        limit_per_type = _clamp(limit_per_type or DEFAULT_LIST_LIMIT)
         data = await self._read(
             self._gamma_host,
             "/public-search",
@@ -405,20 +458,30 @@ class PolymarketService:
                 "events_status": events_status,
             },
         )
-        if flatten:
-            data = _flatten_search(data)
-        cleaned = clean_search(data, compact=compact)
-        return ResponseEnvelope.of(cleaned, source="gamma")
+        if not isinstance(data, dict):
+            return ListPage.of(data, "gamma")
+        events = data.get("events") or []
+        rows = clean_search_events(events, verbosity=verbosity)
+        has_more = bool((data.get("pagination") or {}).get("hasMore"))
+        return ListPage.of(
+            rows,
+            "gamma",
+            next_page=(page or 1) + 1 if has_more else None,
+            truncated=has_more or clamped,
+        )
 
     async def comments(
         self,
         event_id: int,
         *,
-        limit: int = 50,
+        limit: int = DEFAULT_WIDE_LIMIT,
         offset: int = 0,
         order: str | None = None,
         ascending: bool | None = None,
-    ) -> ResponseEnvelope:
+        verbosity: Verbosity = "minimal",
+    ) -> ListPage:
+        clamped = limit > MAX_LIST_LIMIT
+        limit = _clamp(limit)
         data = await self._read(
             self._gamma_host,
             "/comments",
@@ -432,25 +495,30 @@ class PolymarketService:
                 "ascending": ascending,
             },
         )
-        return ResponseEnvelope.of(data, source="gamma")
+        rows = clean_comments(data, verbosity=verbosity)
+        return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)
 
-    async def holders(self, condition_id: str, *, limit: int = 100) -> ResponseEnvelope:
+    async def holders(
+        self, condition_id: str, *, limit: int = DEFAULT_WIDE_LIMIT, verbosity: Verbosity = "minimal"
+    ) -> ListPage:
+        """Top holders per outcome token, flattened to one row per holder."""
+        clamped = limit > MAX_LIST_LIMIT
+        limit = _clamp(limit)
         data = await self._read(
             self._data_host, "/holders", "data", {"market": condition_id, "limit": limit}
         )
-        return ResponseEnvelope.of(data, source="data")
-
+        return ListPage.of(flatten_holders(data, verbosity=verbosity), "data")
 
 
 def _flatten_search(data: Any) -> Any:
     """Surface a flat ``markets`` list on events grouped under a payload.
 
-    Gamma groups markets under events, so the outcome token ids live at
-    ``events[].markets[].clobTokenIds``. We add a top-level ``markets`` array
-    (each entry tagged with its parent ``event_id``/``event_title``/``event_slug``)
-    so a caller reads ``clobTokenIds`` directly without drilling into every event.
-    A response that already carries ``markets`` is returned untouched. Shared by
-    ``search`` and ``collect_markets`` (which passes ``{"events": [...]}``).
+    Gamma groups markets under events, so a flat market view means walking
+    ``events[].markets[]``. We add a top-level ``markets`` array (each entry
+    tagged with its parent ``event_id``/``event_title``/``event_slug``) so a
+    caller reads every ``conditionId`` directly without drilling into each
+    event. A payload that already carries ``markets`` is returned untouched.
+    Used by ``collect_markets``.
     """
     if not isinstance(data, dict) or "markets" in data:
         return data

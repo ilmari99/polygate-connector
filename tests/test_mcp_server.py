@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from polygate_connector import mcp_server
-from polygate_connector.models.common import ResponseEnvelope
+from polygate_connector.models.common import ListPage, ResponseEnvelope
 
 
 class _FakeService:
@@ -21,20 +21,18 @@ class _FakeService:
     """
 
     async def list_markets(self, **params):
-        return ResponseEnvelope.of(
-            [{"conditionId": "0x1", "clobTokenIds": "[\"111\", \"222\"]"}], source="gamma"
+        return ListPage.of(
+            [{"conditionId": "0x1", "question": "Q?", "outcomes": ["Yes", "No"],
+              "outcomePrices": ["0.6", "0.4"]}],
+            "gamma",
+            next_offset=1,
+            truncated=True,
         )
 
     async def search(self, q, **params):
-        # The facade does the flattening; here we return an already-flat envelope.
-        return ResponseEnvelope.of(
-            {
-                "events": [{"id": 7, "title": "Example event"}],
-                "markets": [
-                    {"clobTokenIds": "[\"111\"]", "event_id": 7, "event_title": "Example event"}
-                ],
-            },
-            source="gamma",
+        return ListPage.of(
+            [{"id": 7, "title": "Example event", "slug": "example", "market_count": 2}],
+            "gamma",
         )
 
     async def get_event(self, key, **params):
@@ -44,7 +42,7 @@ class _FakeService:
         )
 
     async def list_series(self, **params):
-        return ResponseEnvelope.of([{"id": "35", "slug": "fomc", "event_count": 3}], source="gamma")
+        return ListPage.of([{"id": "35", "slug": "fomc", "event_count": 3}], "gamma")
 
     async def collect_markets(self, **params):
         return ResponseEnvelope.of(
@@ -74,19 +72,28 @@ async def test_health_tool_reports_status_and_hosts():
     assert "can_trade_live" not in result
 
 
-async def test_list_markets_wraps_envelope(fake_service):
+async def test_list_markets_renders_a_table_at_minimal(fake_service):
     result = await mcp_server.list_markets(limit=1)
     assert result["source"] == "gamma"
     assert "fetched_at" in result
-    assert result["data"][0]["conditionId"] == "0x1"
+    # Minimal verbosity renders rows as a markdown table with the ids intact.
+    assert isinstance(result["rows"], str)
+    assert result["rows"].startswith("| question |")
+    assert "0x1" in result["rows"]
+    assert result["next_offset"] == 1
 
 
-async def test_search_serializes_flattened_envelope(fake_service):
+async def test_list_markets_compact_keeps_row_dicts(fake_service):
+    result = await mcp_server.list_markets(limit=1, verbosity="compact")
+    assert isinstance(result["rows"], list)
+    assert result["rows"][0]["conditionId"] == "0x1"
+
+
+async def test_search_renders_event_rows(fake_service):
     result = await mcp_server.search("example")
     assert result["source"] == "gamma"
-    markets = result["data"]["markets"]
-    assert markets and markets[0]["event_id"] == 7
-    assert markets[0]["event_title"] == "Example event"
+    assert isinstance(result["rows"], str)
+    assert "Example event" in result["rows"]
 
 
 async def test_collect_markets_serializes_flat_list(fake_service):
@@ -99,7 +106,8 @@ async def test_collect_markets_serializes_flat_list(fake_service):
 
 async def test_series_tools_serialize(fake_service):
     listed = await mcp_server.list_series()
-    assert listed["data"][0]["event_count"] == 3
+    assert isinstance(listed["rows"], str)  # minimal default renders a table
+    assert "fomc" in listed["rows"]
     ev = await mcp_server.get_event("fifwc-bra-nor")
     assert ev["data"]["gameId"] == 90086997
 

@@ -29,3 +29,15 @@ DEFAULT_PRICES_HISTORY_FIDELITY = 60  # minutes (hourly)
 # (dozens); a scope that blows past this cap is too broad and must be narrowed,
 # so we raise rather than silently return an incomplete set.
 MARKET_SCAN_MAX_EVENTS = 5000
+
+# --- List defaults and bounds ---
+# Response size is a connector review criterion: list tools default small and
+# page, rather than defaulting large. The caller's limit is clamped server-side
+# because the requesting model's number cannot be trusted.
+DEFAULT_LIST_LIMIT = 10   # list_markets, list_events, search
+DEFAULT_WIDE_LIMIT = 20   # list_series, get_holders, get_comments
+MAX_LIST_LIMIT = 100
+
+# Hard ceiling on a single serialized tool result. Anything larger is reduced
+# (rows dropped, with an explicit notice) before it reaches the client.
+RESPONSE_MAX_BYTES = 100_000

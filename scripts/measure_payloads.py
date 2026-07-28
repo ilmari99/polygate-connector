@@ -84,20 +84,24 @@ async def main() -> int:
         await run("list_series", lambda: service.list_series())
         await run("list_tags", lambda: service.list_tags())
 
-        condition_id, token_id = None, None
-        for market in (markets or {}).get("data") or []:
-            tokens = market.get("clobTokenIds")
-            if market.get("conditionId") and isinstance(tokens, list) and tokens:
-                condition_id, token_id = market["conditionId"], tokens[0]
-                break
+        def _rows(payload: Any) -> list:
+            data = (payload or {}).get("rows") or (payload or {}).get("data") or []
+            return data if isinstance(data, list) else []
+
+        condition_id = next(
+            (m["conditionId"] for m in _rows(markets) if m.get("conditionId")), None
+        )
         event_slug, event_id = None, None
-        for event in (events or {}).get("data") or []:
+        for event in _rows(events):
             if event.get("slug") and event.get("id"):
                 event_slug, event_id = event["slug"], event["id"]
                 break
 
+        token_id = None
         if condition_id:
-            await run("get_market", lambda: service.get_market(condition_id))
+            market = await run("get_market", lambda: service.get_market(condition_id))
+            tokens = ((market or {}).get("data") or {}).get("clobTokenIds")
+            token_id = tokens[0] if isinstance(tokens, list) and tokens else None
             await run("get_holders", lambda: service.holders(condition_id))
         else:
             rows.append(("get_market", "SKIPPED: no conditionId discovered"))

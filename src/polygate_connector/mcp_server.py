@@ -13,13 +13,24 @@ import sys
 import time
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from . import __version__
 from .config import get_settings
 from .core import logging as core_logging
 from .core.errors import PlatformError
+from .render import (
+    HOLDER_COLUMNS,
+    MARKET_COLUMNS,
+    SEARCH_COLUMNS,
+    SERIES_COLUMNS,
+    Column,
+    enforce_size_cap,
+    markdown_table,
+)
 from .services.facade import PolymarketService
+
+Verbosity = Literal["minimal", "compact", "full"]
 
 log = logging.getLogger("polygate_connector.mcp")
 
@@ -55,7 +66,9 @@ def _require_service() -> PolymarketService:
     return _service
 
 
-async def _run_tool(name: str, awaitable: Awaitable[Any]) -> dict[str, Any]:
+async def _run_tool(
+    name: str, awaitable: Awaitable[Any], *, table: list[Column] | None = None
+) -> dict[str, Any]:
     """Await a tool operation and always return a JSON-able dict.
 
     A :class:`PlatformError` surfaces as its stable ``code`` with an actionable
@@ -63,6 +76,10 @@ async def _run_tool(name: str, awaitable: Awaitable[Any]) -> dict[str, Any]:
     is logged server-side and never sent to the client. One log line per call
     records the tool name, duration, and status; arguments and results are
     never logged.
+
+    When ``table`` is given and the result carries list ``rows``, they are
+    rendered as a markdown table (same information, roughly half the tokens of
+    key-repeated JSON). Every result then passes the response size cap.
     """
     started = time.perf_counter()
     status = "ok"
@@ -86,7 +103,11 @@ async def _run_tool(name: str, awaitable: Awaitable[Any]) -> dict[str, Any]:
             (time.perf_counter() - started) * 1000,
             status,
         )
-    return result if isinstance(result, dict) else result.model_dump(mode="json")
+    if not isinstance(result, dict):
+        result = result.model_dump(mode="json", exclude_none=True)
+    if table is not None and isinstance(result.get("rows"), list):
+        result["rows"] = markdown_table(result["rows"], table)
+    return enforce_size_cap(result)
 
 
 @asynccontextmanager
@@ -208,23 +229,25 @@ async def list_markets(
     closed: bool = False,
     tag_id: int | None = None,
     slug: str | None = None,
-    limit: int = 50,
+    limit: int = 10,
     offset: int = 0,
     order: str | None = None,
     ascending: bool | None = None,
-    compact: bool = True,
+    verbosity: Verbosity = "minimal",
 ) -> dict[str, Any]:
     """List markets (Gamma). Pass `slug` to fetch one market by its slug.
 
-    Each market carries a `conditionId` and index-aligned `outcomes`,
-    `outcomePrices` (each price is the implied probability), and `clobTokenIds`
-    (the Yes/No token ids you trade on). Sort with `order` (e.g. 'volume24hr',
-    'liquidity') plus `ascending`; a `limit` over 100 is paged automatically past
-    Gamma's 100-row cap. Returns compact rows by default (low-signal fields -
-    descriptions, images, AMM internals - are dropped); pass `compact=False` for
-    the full objects.
+    Each market carries a `conditionId` (the key for `get_market`/`get_holders`)
+    and index-aligned `outcomes` and `outcomePrices` (each price is the implied
+    probability). Sort with `order` (e.g. 'volume24hr', 'liquidity') plus
+    `ascending`. Results arrive as a page of rows with `next_offset` when more
+    exist; `limit` is capped at 100 server-side. At the default `verbosity`
+    ("minimal") rows form a markdown table; "compact" returns projected
+    objects including `clobTokenIds`; "full" returns the raw upstream objects.
     """
-    return await _run_tool("list_markets", 
+    table = MARKET_COLUMNS if verbosity == "minimal" else None
+    return await _run_tool(
+        "list_markets",
         _require_service().list_markets(
             active=active,
             closed=closed,
@@ -234,23 +257,26 @@ async def list_markets(
             offset=offset,
             order=order,
             ascending=ascending,
-            compact=compact,
-        )
+            verbosity=verbosity,
+        ),
+        table=table,
     )
 
 
 @read_tool("Get market")
-async def get_market(condition_id: str, compact: bool = True) -> dict[str, Any]:
+async def get_market(condition_id: str, verbosity: Verbosity = "compact") -> dict[str, Any]:
     """Fetch a single market by its `conditionId` (0x...), as one object.
 
-    Returns the market object (not a list); raises `not_found` if the id resolves
-    to nothing. The full object to read before trading: `description`/
-    `resolutionSource` (the exact resolution criteria), the tradeable flags
-    (`active`, `closed`, `acceptingOrders`, `enableOrderBook`), `endDate`, and the
-    fee params (`makerBaseFee`/`takerBaseFee` in basis points, `feesEnabled`).
-    Compact by default; pass `compact=False` for every field.
+    Returns the market object (not a list); a bad id yields a `not_found`
+    error. The object carries the resolution and status fields - `question`,
+    `endDate`, `active`/`closed`/`acceptingOrders`, `outcomes` with
+    `outcomePrices` - plus the `clobTokenIds` that key the order-book and
+    price tools. `verbosity="full"` returns every upstream field, including
+    `description` and `resolutionSource` (the exact resolution criteria).
     """
-    return await _run_tool("get_market", _require_service().get_market(condition_id, compact=compact))
+    return await _run_tool(
+        "get_market", _require_service().get_market(condition_id, verbosity=verbosity)
+    )
 
 
 @read_tool("List events")
@@ -259,20 +285,22 @@ async def list_events(
     closed: bool = False,
     tag_id: int | None = None,
     series_id: int | None = None,
-    limit: int = 50,
+    limit: int = 10,
     offset: int = 0,
     order: str | None = None,
-    compact: bool = True,
+    verbosity: Verbosity = "minimal",
 ) -> dict[str, Any]:
     """List events (each event groups one or more markets).
 
     `tag_id` drills into a category; `series_id` drills into a series (a
-    recurring/multi-part group - each Fed decision, a monthly BTC strike ladder,
-    a tournament's fixtures). A `limit` over 100 is paged automatically past
-    Gamma's per-page cap. Compact by default (low-signal fields dropped and the
-    nested markets compacted); pass `compact=False` for full objects.
+    recurring/multi-part group - each Fed decision, a monthly BTC strike
+    ladder, a tournament's fixtures). Each row carries a `market_count` and its
+    top markets by liquidity; `get_event` returns an event's complete market
+    list. Results arrive as a page of rows with `next_offset` when more exist;
+    `limit` is capped at 100 server-side.
     """
-    return await _run_tool("list_events", 
+    return await _run_tool(
+        "list_events",
         _require_service().list_events(
             active=active,
             closed=closed,
@@ -281,35 +309,42 @@ async def list_events(
             limit=limit,
             offset=offset,
             order=order,
-            compact=compact,
-        )
+            verbosity=verbosity,
+        ),
     )
 
 
 @read_tool("Get event")
-async def get_event(key: str, compact: bool = True) -> dict[str, Any]:
-    """Fetch a single event (with its nested markets) by slug or event id.
+async def get_event(key: str, verbosity: Verbosity = "compact") -> dict[str, Any]:
+    """Fetch a single event (with its complete nested markets) by slug or event id.
 
-    An event is a 'market page' grouping one or more atomic markets. Use this to
-    resolve a slug/id you got from `search` or `list_events` into the full object,
-    then read its `series`/`gameId` to navigate to related events. Compact by
-    default; pass `compact=False` for every field.
+    An event is a 'market page' grouping one or more atomic markets. Resolves a
+    slug or id from `search` or `list_events` into the full object; its
+    `seriesSlug`/`gameId` fields identify the related sibling events.
     """
-    return await _run_tool("get_event", _require_service().get_event(key, compact=compact))
+    return await _run_tool(
+        "get_event", _require_service().get_event(key, verbosity=verbosity)
+    )
 
 
 @read_tool("List series")
-async def list_series(limit: int = 100, offset: int = 0, compact: bool = True) -> dict[str, Any]:
+async def list_series(
+    limit: int = 20, offset: int = 0, verbosity: Verbosity = "minimal"
+) -> dict[str, Any]:
     """List series - Polymarket's recurring/multi-part groupings of events.
 
     Examples: `fomc` (each Fed decision), `cpi`, `btc-multi-strikes-weekly`,
     `nyc-daily-weather`, a sports league or tournament. A lightweight catalog:
     each entry carries an `event_count` instead of its events. Drill into a
     series with `list_events(series_id=...)` or flatten it with
-    `collect_markets(series_id=...)`.
+    `collect_markets(series_id=...)`. At the default `verbosity` rows form a
+    markdown table.
     """
-    return await _run_tool("list_series", 
-        _require_service().list_series(limit=limit, offset=offset, compact=compact)
+    table = SERIES_COLUMNS if verbosity == "minimal" else None
+    return await _run_tool(
+        "list_series",
+        _require_service().list_series(limit=limit, offset=offset, verbosity=verbosity),
+        table=table,
     )
 
 
@@ -321,26 +356,26 @@ async def collect_markets(
     group_by: str | None = None,
     active: bool = True,
     closed: bool = False,
-    compact: bool = True,
+    verbosity: Verbosity = "minimal",
 ) -> dict[str, Any]:
     """Flatten every atomic market under one grouping node into a single flat list.
 
-    Polymarket buries related markets across separate sibling events, so `search`
-    and drilling into one event show only a fragment. This gathers them all. Pass
-    EXACTLY ONE scope:
+    Polymarket splits related markets across separate sibling events, so
+    `search` and a single event show only a fragment; this gathers the whole
+    scope. Pass EXACTLY ONE of:
     - `series_id` - every market in that series' events.
     - `tag_id` - every market in that category's events.
-    - `event` (slug or id) - that event's markets; add `group_by="gameId"` to
-      expand a sports fixture to all its sibling events (moneyline, spread,
-      totals, ...) and collect their markets. `group_by` names any event
-      attribute - no key is hardcoded, so a future non-sports link key works too.
+    - `event` (slug or id) - that event's markets; with `group_by="gameId"` the
+      event expands to the sibling events sharing its `gameId` (a sports
+      fixture's moneyline, spread, totals, ...). `group_by` names any event
+      attribute - no key is hardcoded.
 
     Each returned market is tagged with its parent `event_id`/`event_title`/
-    `event_slug` and carries its `conditionId` and `clobTokenIds`. The scan runs
-    to completion and errors if the scope is too broad - never silently partial.
-    Compact by default; pass `compact=False` for full objects.
+    `event_slug` and carries its `conditionId`. The scan runs to completion and
+    errors if the scope is too broad - never silently partial.
     """
-    return await _run_tool("collect_markets", 
+    return await _run_tool(
+        "collect_markets",
         _require_service().collect_markets(
             series_id=series_id,
             tag_id=tag_id,
@@ -348,32 +383,37 @@ async def collect_markets(
             group_by=group_by,
             active=active,
             closed=closed,
-            compact=compact,
-        )
+            verbosity=verbosity,
+        ),
     )
 
 
 @read_tool("List categories")
-async def list_tags() -> dict[str, Any]:
-    """List the category tags markets can be filtered by."""
-    return await _run_tool("list_tags", _require_service().list_tags())
+async def list_tags(verbosity: Verbosity = "minimal") -> dict[str, Any]:
+    """List the category tags markets can be filtered by (id, label, slug)."""
+    return await _run_tool("list_tags", _require_service().list_tags(verbosity=verbosity))
 
 
 @read_tool("Get order book")
-async def get_order_book(token_id: str) -> dict[str, Any]:
-    """Full CLOB order book for an outcome token (`clobTokenId`).
+async def get_order_book(token_id: str, full: bool = False) -> dict[str, Any]:
+    """CLOB order book for an outcome token (`clobTokenId`), summarized.
 
-    Carries a derived `summary` computed from the ladder: `best_bid`, `best_ask`
-    (with sizes), `midpoint` (fair value), and `spread`.
-    To buy you pay `best_ask`; to sell you get `best_bid`.
+    Returns a `summary` (`best_bid`/`best_ask` with sizes, `midpoint`,
+    `spread`), the top 5 levels per side best-first with cumulative size
+    (`bids_top`/`asks_top`), and per-side `depth` totals. `full=True` includes
+    the complete raw ladder as well.
     """
-    return await _run_tool("get_order_book", _require_service().order_book(token_id))
+    return await _run_tool(
+        "get_order_book", _require_service().order_book(token_id, full=full)
+    )
 
 
 @read_tool("Get last trade price")
 async def get_last_trade_price(token_id: str) -> dict[str, Any]:
     """Last traded price for an outcome token - live CLOB, more current than Gamma's cached `bestBid`/`bestAsk`."""
-    return await _run_tool("get_last_trade_price", _require_service().last_trade_price(token_id))
+    return await _run_tool(
+        "get_last_trade_price", _require_service().last_trade_price(token_id)
+    )
 
 
 @read_tool("Get price history")
@@ -383,19 +423,27 @@ async def get_prices_history(
     start_ts: int | None = None,
     end_ts: int | None = None,
     fidelity: int | None = None,
+    raw: bool = False,
 ) -> dict[str, Any]:
-    """Historical price series for an outcome token.
+    """Historical price series for an outcome token, summarized by default.
 
     Provide either `interval` (e.g. '1h', '6h', '1d', '1w', 'max') or a
-    `start_ts`/`end_ts` Unix-seconds window. `fidelity` is the resolution in
-    minutes. If you pass none of these it defaults to a 1-week window at hourly
-    resolution; the applied `interval` is echoed back in the payload so you know
-    the span you received.
+    `start_ts`/`end_ts` Unix-seconds window; `fidelity` is the resolution in
+    minutes. With none of these the window defaults to one week at hourly
+    resolution, and the applied `interval` is echoed back. The default result
+    is a window `summary` (first/last/min/max/change/n_points); `raw=True`
+    returns every point instead.
     """
-    return await _run_tool("get_prices_history", 
+    return await _run_tool(
+        "get_prices_history",
         _require_service().prices_history(
-            token_id, interval=interval, start_ts=start_ts, end_ts=end_ts, fidelity=fidelity
-        )
+            token_id,
+            interval=interval,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            fidelity=fidelity,
+            raw=raw,
+        ),
     )
 
 
@@ -408,60 +456,80 @@ async def search(
     limit_per_type: int | None = None,
     page: int | None = None,
     events_status: str | None = None,
-    compact: bool = True,
-    flatten: bool = False,
+    verbosity: Verbosity = "minimal",
 ) -> dict[str, Any]:
-    """Full-text search over Polymarket events and markets.
+    """Full-text search over Polymarket events.
 
-    Results group under `events`; each event's nested markets already carry the
-    decoded `clobTokenIds` (an array, like `outcomes`/`outcomePrices`) you trade
-    on. `limit_per_type` bounds the number of events, not the markets nested in
-    each, so a few hits can still be a large payload. Polymarket splits one topic
-    across sibling events (a game's moneyline, spreads, exact-score, ... are
-    separate events), so search shows only a fragment: to gather every market for
-    a fixture, pass its slug to `collect_markets(event=<slug>, group_by="gameId")`.
-    Set `flatten=True` to also get a top-level `markets` array (each entry tagged
-    with `event_id`/`event_title`/`event_slug`) - off by default because it
-    duplicates every nested market and roughly doubles the payload. `events_status`
-    may be e.g. 'active' or 'resolved'. Compact by default; pass `compact=False`
-    for full objects.
+    Returns matching events as rows; each carries a `market_count` and its top
+    markets by liquidity, and `get_event(<slug>)` returns an event's complete
+    market list. Polymarket splits one topic across sibling events (a game's
+    moneyline, spreads, and exact-score are separate events), so
+    `collect_markets(event=<slug>, group_by="gameId")` gathers every market
+    for a fixture. `limit_per_type` bounds the number of events (capped at 100
+    server-side); `events_status` filters e.g. 'active' or 'resolved'; a
+    `next_page` field appears when more results exist. At the default
+    `verbosity` rows form a markdown table.
     """
-    return await _run_tool("search", 
+    table = SEARCH_COLUMNS if verbosity == "minimal" else None
+    return await _run_tool(
+        "search",
         _require_service().search(
             q,
             limit_per_type=limit_per_type,
             page=page,
             events_status=events_status,
-            compact=compact,
-            flatten=flatten,
-        )
+            verbosity=verbosity,
+        ),
+        table=table,
     )
 
 
 @read_tool("Get event comments")
 async def get_comments(
     event_id: int,
-    limit: int = 50,
+    limit: int = 20,
     offset: int = 0,
     order: str | None = None,
     ascending: bool | None = None,
+    verbosity: Verbosity = "minimal",
 ) -> dict[str, Any]:
-    """Public comments on an event (by its numeric event id). Unverified sentiment."""
-    return await _run_tool("get_comments", 
+    """Public comments on an event (by its numeric event id). Unverified user content.
+
+    Each row carries the comment `body`, `createdAt`, `author` display name,
+    and `reactionCount`. Results arrive as a page of rows with `next_offset`
+    when more exist; `limit` is capped at 100 server-side.
+    """
+    return await _run_tool(
+        "get_comments",
         _require_service().comments(
-            event_id, limit=limit, offset=offset, order=order, ascending=ascending
-        )
+            event_id,
+            limit=limit,
+            offset=offset,
+            order=order,
+            ascending=ascending,
+            verbosity=verbosity,
+        ),
     )
 
 
 @read_tool("Get top holders")
-async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
-    """Top holders for a market (`conditionId`), grouped per outcome token.
+async def get_holders(
+    condition_id: str, limit: int = 20, verbosity: Verbosity = "minimal"
+) -> dict[str, Any]:
+    """Top holders for a market (`conditionId`), one row per holder.
 
-    Each holder has `amount`, `outcomeIndex`, `proxyWallet`, `pseudonym` - a
-    signal about how much money sits on each side.
+    Each row carries the holder's display name, `amount` (shares), and
+    `outcomeIndex` (which side of the market the shares are on, aligned with
+    the market's `outcomes` array). `limit` bounds holders per outcome and is
+    capped at 100 server-side. At the default `verbosity` rows form a markdown
+    table.
     """
-    return await _run_tool("get_holders", _require_service().holders(condition_id, limit=limit))
+    table = HOLDER_COLUMNS if verbosity == "minimal" else None
+    return await _run_tool(
+        "get_holders",
+        _require_service().holders(condition_id, limit=limit, verbosity=verbosity),
+        table=table,
+    )
 
 
 def run() -> None:

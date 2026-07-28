@@ -1,9 +1,4 @@
-"""Tests for the shared facade operations layer.
-
-The facade is the single source of truth both transports (REST + MCP) delegate
-to, so the logic that used to be duplicated in each adapter - notably the search
-``markets`` flattening - is verified here once.
-"""
+"""Tests for the shared facade operations layer (HTTP boundary stubbed)."""
 
 from __future__ import annotations
 
@@ -70,7 +65,7 @@ async def test_get_market_unwraps_single_object(monkeypatch):
     env = await svc.get_market("0xabc")
     assert isinstance(env.data, dict)  # NOT a 1-element list
     assert env.data["conditionId"] == "0xabc"
-    assert env.data["clobTokenIds"] == ["1", "2"]  # decoded
+    assert env.data["clobTokenIds"] == ["1", "2"]  # decoded, kept at compact
     assert "description" not in env.data  # compact by default
     await svc.aclose()
 
@@ -82,10 +77,34 @@ async def test_get_market_not_found_raises(monkeypatch):
     await svc.aclose()
 
 
-async def test_get_market_full_when_compact_false(monkeypatch):
+async def test_get_market_full_when_requested(monkeypatch):
     svc = _service(monkeypatch, [{"conditionId": "0xabc", "description": "keep"}])
-    env = await svc.get_market("0xabc", compact=False)
+    env = await svc.get_market("0xabc", verbosity="full")
     assert env.data["description"] == "keep"
+    await svc.aclose()
+
+
+# --- limit clamping ---
+
+
+async def test_list_markets_clamps_limit_and_flags_truncation(monkeypatch):
+    svc = _service(monkeypatch, lambda params: [
+        {"conditionId": f"0x{i}", "question": "Q"} for i in range(params.get("limit", 0))
+    ])
+    page = await svc.list_markets(limit=5000)
+    assert svc._last_params["limit"] == 100  # clamped before the upstream call
+    assert page.returned == 100
+    assert page.truncated is True
+    assert page.next_offset == 100
+    await svc.aclose()
+
+
+async def test_list_markets_short_page_ends_pagination(monkeypatch):
+    svc = _service(monkeypatch, [{"conditionId": "0x1", "question": "Q"}])
+    page = await svc.list_markets(limit=10)
+    assert page.returned == 1
+    assert page.next_offset is None
+    assert page.truncated is False
     await svc.aclose()
 
 
@@ -109,39 +128,51 @@ async def test_prices_history_explicit_window_not_defaulted(monkeypatch):
     await svc.aclose()
 
 
-async def test_prices_history_respects_explicit_interval(monkeypatch):
-    svc = _service(monkeypatch, {"history": []})
+async def test_prices_history_summarizes_by_default(monkeypatch):
+    svc = _service(monkeypatch, {"history": [{"t": 1, "p": 0.5}, {"t": 2, "p": 0.7}]})
     env = await svc.prices_history("token1", interval="1d")
-    assert svc._last_params["interval"] == "1d"
+    assert "history" not in env.data
+    assert env.data["summary"]["change"] == 0.2
     assert env.data["interval"] == "1d"
     await svc.aclose()
 
 
-# --- search flatten is optional (Category 3) ---
+async def test_prices_history_raw_returns_points(monkeypatch):
+    svc = _service(monkeypatch, {"history": [{"t": 1, "p": 0.5}]})
+    env = await svc.prices_history("token1", interval="1d", raw=True)
+    assert env.data["history"] == [{"t": 1, "p": 0.5}]
+    await svc.aclose()
+
+
+# --- search rows ---
 
 
 def _search_payload(_params):
     return {
         "events": [
             {"id": "7", "title": "T", "slug": "s",
-             "markets": [{"id": "m1", "clobTokenIds": "[\"1\"]"}]}
+             "markets": [{"id": "m1", "clobTokenIds": "[\"1\"]", "liquidityNum": 3.0}]}
         ],
-        "pagination": {},
+        "pagination": {"hasMore": True},
     }
 
 
-async def test_search_no_flat_markets_by_default(monkeypatch):
+async def test_search_minimal_rows_are_event_summaries(monkeypatch):
     svc = _service(monkeypatch, _search_payload)
-    env = await svc.search("q")
-    assert "markets" not in env.data  # flat array is opt-in
-    # nested markets still carry the decoded token ids to trade on
-    assert env.data["events"][0]["markets"][0]["clobTokenIds"] == ["1"]
+    page = await svc.search("q")
+    assert svc._last_params["limit_per_type"] == 10  # default applied
+    row = page.rows[0]
+    assert row["title"] == "T"
+    assert row["market_count"] == 1
+    assert row["top_markets"][0]["liquidityNum"] == 3.0
+    assert page.next_page == 2  # upstream said hasMore
+    assert page.truncated is True
     await svc.aclose()
 
 
-async def test_search_flatten_true_adds_tagged_markets(monkeypatch):
+async def test_search_full_keeps_raw_events(monkeypatch):
     svc = _service(monkeypatch, _search_payload)
-    env = await svc.search("q", flatten=True)
-    assert env.data["markets"][0]["event_id"] == "7"
-    assert env.data["markets"][0]["clobTokenIds"] == ["1"]
+    page = await svc.search("q", verbosity="full")
+    # Full rows keep nested markets (token ids decoded by clean_event).
+    assert page.rows[0]["markets"][0]["clobTokenIds"] == ["1"]
     await svc.aclose()

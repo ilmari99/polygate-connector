@@ -32,27 +32,26 @@ async def test_list_markets_wraps_envelope(service):
     route = respx.get(f"{GAMMA}/markets").mock(
         return_value=httpx.Response(200, json=[{"conditionId": "0xabc", "question": "Will it?"}])
     )
-    env = await service.list_markets()
+    page = await service.list_markets()
     assert route.called
-    assert env.source == "gamma"
-    assert env.data[0]["conditionId"] == "0xabc"
+    assert page.source == "gamma"
+    assert page.rows[0]["conditionId"] == "0xabc"
 
 
 @respx.mock
-async def test_list_markets_pages_past_gamma_cap(service):
-    # Gamma caps a page at 100 rows; the facade must fan out to fetch more.
-    page1 = [{"conditionId": f"0x{i}", "question": "Q"} for i in range(100)]
-    page2 = [{"conditionId": f"0x{i}", "question": "Q"} for i in range(100, 130)]
+async def test_list_markets_over_limit_is_clamped_to_one_page(service):
+    # A limit beyond the server cap is clamped to 100 (one Gamma page); the
+    # caller pages on via next_offset instead of receiving a giant response.
+    full_page = [{"conditionId": f"0x{i}", "question": "Q"} for i in range(100)]
     route = respx.get(f"{GAMMA}/markets").mock(
-        side_effect=[httpx.Response(200, json=page1), httpx.Response(200, json=page2)]
+        return_value=httpx.Response(200, json=full_page)
     )
-    env = await service.list_markets(limit=150)
-    # Two upstream calls; a short second page stops the loop at 130 rows.
-    assert route.call_count == 2
-    assert len(env.data) == 130
+    page = await service.list_markets(limit=150)
+    assert route.call_count == 1
     assert route.calls[0].request.url.params["limit"] == "100"
-    assert route.calls[0].request.url.params["offset"] == "0"
-    assert route.calls[1].request.url.params["offset"] == "100"
+    assert len(page.rows) == 100
+    assert page.truncated is True
+    assert page.next_offset == 100  # full page: more may exist upstream
 
 
 @respx.mock
@@ -67,14 +66,18 @@ async def test_list_markets_decodes_and_compacts(service):
         "volumeNum": 9.0,
     }
     respx.get(f"{GAMMA}/markets").mock(return_value=httpx.Response(200, json=[raw]))
-    # Default is compact: JSON fields decoded AND low-signal fields stripped.
-    compact = (await service.list_markets()).data[0]
+    # Default is minimal: decoded, low-signal fields and clobTokenIds stripped.
+    minimal = (await service.list_markets()).rows[0]
+    assert minimal["outcomePrices"] == ["0.6", "0.4"]
+    assert "clobTokenIds" not in minimal
+    assert "description" not in minimal and "image" not in minimal
+    # Compact keeps the token ids, still no noise.
+    compact = (await service.list_markets(verbosity="compact")).rows[0]
     assert compact["clobTokenIds"] == ["111", "222"]
-    assert compact["outcomePrices"] == ["0.6", "0.4"]
     assert compact["volumeNum"] == 9.0
-    assert "description" not in compact and "image" not in compact
+    assert "description" not in compact
     # Full payload on demand: every field kept, still decoded.
-    full = (await service.list_markets(compact=False)).data[0]
+    full = (await service.list_markets(verbosity="full")).rows[0]
     assert full["clobTokenIds"] == ["111", "222"]
     assert "description" in full and "image" in full
 
@@ -118,8 +121,8 @@ async def test_list_series_is_lightweight_catalog(service):
             json=[{"id": "35", "slug": "fomc", "events": [{"id": "a"}, {"id": "b"}]}],
         )
     )
-    env = await service.list_series()
-    s = env.data[0]
+    page = await service.list_series()
+    s = page.rows[0]
     assert s["slug"] == "fomc"
     assert s["event_count"] == 2
     assert "events" not in s
@@ -138,7 +141,7 @@ async def test_collect_markets_flattens_a_series(service):
             ],
         )
     )
-    env = await service.collect_markets(series_id=35)
+    env = await service.collect_markets(series_id=35, verbosity="compact")
     data = env.data
     assert data["scope"] == {"series_id": 35}
     assert data["event_count"] == 2
@@ -167,7 +170,9 @@ async def test_collect_markets_event_expands_by_gameid(service):
             httpx.Response(200, json=series_scan),   # _scan_events(series_id=11433)
         ]
     )
-    env = await service.collect_markets(event="fifwc-bra-nor", group_by="gameId")
+    env = await service.collect_markets(
+        event="fifwc-bra-nor", group_by="gameId", verbosity="compact"
+    )
     data = env.data
     assert route.calls[0].request.url.params["slug"] == "fifwc-bra-nor"
     assert route.calls[1].request.url.params["series_id"] == "11433"
@@ -193,8 +198,9 @@ async def test_orderbook_routes_to_clob(service):
     env = await service.order_book("12345")
     assert env.source == "clob"
     assert env.data["tick_size"] == "0.01"
-    # Empty book -> summary present with null fields.
+    # Empty book -> summary present with null fields; no raw ladder by default.
     assert env.data["summary"]["best_bid"] is None
+    assert "bids" not in env.data
 
 
 @respx.mock
@@ -231,43 +237,12 @@ async def test_search_routes_to_gamma(service):
             200, json={"events": [{"id": "1"}], "pagination": {"hasMore": False}}
         )
     )
-    env = await service.search("bitcoin")
+    page = await service.search("bitcoin")
     assert route.called
     assert route.calls.last.request.url.params["q"] == "bitcoin"
-    assert env.source == "gamma"
-    assert env.data["events"][0]["id"] == "1"
-
-
-@respx.mock
-async def test_search_flatten_is_opt_in(service):
-    respx.get(f"{GAMMA}/public-search").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "events": [
-                    {
-                        "id": "42",
-                        "title": "Will it rain?",
-                        "markets": [
-                            {"id": "m1", "clobTokenIds": "[\"111\",\"222\"]"},
-                        ],
-                    }
-                ],
-                "pagination": {"hasMore": False},
-            },
-        )
-    )
-    # Default: no flat top-level markets array; nested markets still decoded.
-    default = (await service.search("rain")).data
-    assert "markets" not in default
-    assert default["events"][0]["markets"][0]["clobTokenIds"] == ["111", "222"]
-    # Opt-in: flatten=True synthesizes the tagged flat array.
-    flat = (await service.search("rain", flatten=True)).data["markets"]
-    assert len(flat) == 1
-    assert flat[0]["id"] == "m1"
-    assert flat[0]["clobTokenIds"] == ["111", "222"]
-    assert flat[0]["event_id"] == "42"
-    assert flat[0]["event_title"] == "Will it rain?"
+    assert page.source == "gamma"
+    assert page.rows[0]["id"] == "1"
+    assert page.next_page is None  # hasMore false
 
 
 @respx.mock
@@ -275,22 +250,29 @@ async def test_comments_routes_to_gamma(service):
     route = respx.get(f"{GAMMA}/comments").mock(
         return_value=httpx.Response(200, json=[{"id": "c1", "body": "hi"}])
     )
-    env = await service.comments(123)
+    page = await service.comments(123)
     assert route.called
     params = route.calls.last.request.url.params
     assert params["parent_entity_type"] == "Event"
     assert params["parent_entity_id"] == "123"
-    assert env.source == "gamma"
-    assert env.data[0]["id"] == "c1"
+    assert params["limit"] == "20"  # default page size
+    assert page.source == "gamma"
+    assert page.rows[0]["body"] == "hi"
 
 
 @respx.mock
 async def test_holders_routes_to_data_api(service):
     route = respx.get(f"{DATA}/holders").mock(
-        return_value=httpx.Response(200, json=[{"token": "t1", "holders": []}])
+        return_value=httpx.Response(
+            200,
+            json=[{"token": "t1", "holders": [
+                {"pseudonym": "A", "amount": 7.0, "outcomeIndex": 0, "bio": "x"},
+            ]}],
+        )
     )
-    env = await service.holders("0xabc", limit=5)
+    page = await service.holders("0xabc", limit=5)
     assert route.called
     assert route.calls.last.request.url.params["market"] == "0xabc"
-    assert env.source == "data"
-    assert env.data[0]["token"] == "t1"
+    assert page.source == "data"
+    # Flattened to one row per holder, projected to the minimal fields.
+    assert page.rows[0] == {"pseudonym": "A", "amount": 7.0, "outcomeIndex": 0}
