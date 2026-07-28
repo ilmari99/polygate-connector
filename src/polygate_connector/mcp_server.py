@@ -112,20 +112,36 @@ async def _run_tool(
 
 
 @asynccontextmanager
-async def _lifespan(_server: "FastMCP") -> AsyncIterator[None]:
-    """Build the Polymarket service once, tear it down on shutdown."""
+async def service_context() -> AsyncIterator[PolymarketService]:
+    """Own the process-wide service for the duration of the context.
+
+    If a service is already installed (e.g. by the HTTP entry point, whose app
+    lifespan outlives the per-session MCP lifespan), it is reused untouched -
+    building one per stateless HTTP session would discard the response cache
+    and the connection pool on every request.
+    """
     global _service
+    if _service is not None:
+        yield _service
+        return
     get_settings.cache_clear()
     settings = get_settings()
     _configure_stderr_logging(settings.log_level)
     _service = PolymarketService(settings)
     log.info("Polymarket research MCP server ready (version %s).", __version__)
     try:
-        yield
+        yield _service
     finally:
         await _service.aclose()
         _service = None
         log.info("Polymarket research MCP server stopped.")
+
+
+@asynccontextmanager
+async def _lifespan(_server: "FastMCP") -> AsyncIterator[None]:
+    """Build the Polymarket service once, tear it down on shutdown."""
+    async with service_context():
+        yield
 
 
 # Importing FastMCP here keeps the import error (if `mcp` is missing) close to the
