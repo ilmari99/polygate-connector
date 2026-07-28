@@ -89,6 +89,7 @@ async def _lifespan(_server: "FastMCP") -> AsyncIterator[None]:
 # code that needs it, with a clear remediation hint.
 try:
     from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
     raise ModuleNotFoundError(
         "The 'mcp' package is required for this MCP server. Install it "
@@ -143,10 +144,25 @@ mcp = FastMCP(
 mcp._mcp_server.version = __version__
 
 
+def read_tool(title: str, *, open_world: bool = True):
+    """Register a read-only tool with the annotations connector review requires.
+
+    ``structured_output=False`` keeps the wire format to a single serialized
+    text block; FastMCP would otherwise send ``structuredContent`` alongside it
+    and double every payload.
+    """
+    return mcp.tool(
+        annotations=ToolAnnotations(
+            title=title, readOnlyHint=True, openWorldHint=open_world
+        ),
+        structured_output=False,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # System
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@read_tool("Server health", open_world=False)
 async def health() -> dict[str, Any]:
     """Liveness check: server status, version, and the upstream API hosts in use."""
     settings = get_settings()
@@ -165,7 +181,7 @@ async def health() -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Market data
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@read_tool("List markets")
 async def list_markets(
     active: bool = True,
     closed: bool = False,
@@ -202,7 +218,7 @@ async def list_markets(
     )
 
 
-@mcp.tool()
+@read_tool("Get market")
 async def get_market(condition_id: str, compact: bool = True) -> dict[str, Any]:
     """Fetch a single market by its `conditionId` (0x...), as one object.
 
@@ -216,7 +232,7 @@ async def get_market(condition_id: str, compact: bool = True) -> dict[str, Any]:
     return await _serialize(_require_service().get_market(condition_id, compact=compact))
 
 
-@mcp.tool()
+@read_tool("List events")
 async def list_events(
     active: bool = True,
     closed: bool = False,
@@ -249,7 +265,7 @@ async def list_events(
     )
 
 
-@mcp.tool()
+@read_tool("Get event")
 async def get_event(key: str, compact: bool = True) -> dict[str, Any]:
     """Fetch a single event (with its nested markets) by slug or event id.
 
@@ -261,7 +277,7 @@ async def get_event(key: str, compact: bool = True) -> dict[str, Any]:
     return await _serialize(_require_service().get_event(key, compact=compact))
 
 
-@mcp.tool()
+@read_tool("List series")
 async def list_series(limit: int = 100, offset: int = 0, compact: bool = True) -> dict[str, Any]:
     """List series - Polymarket's recurring/multi-part groupings of events.
 
@@ -276,7 +292,7 @@ async def list_series(limit: int = 100, offset: int = 0, compact: bool = True) -
     )
 
 
-@mcp.tool()
+@read_tool("Collect markets in scope")
 async def collect_markets(
     series_id: int | None = None,
     tag_id: int | None = None,
@@ -316,13 +332,13 @@ async def collect_markets(
     )
 
 
-@mcp.tool()
+@read_tool("List categories")
 async def list_tags() -> dict[str, Any]:
     """List the category tags markets can be filtered by."""
     return await _serialize(_require_service().list_tags())
 
 
-@mcp.tool()
+@read_tool("Get order book")
 async def get_order_book(token_id: str) -> dict[str, Any]:
     """Full CLOB order book for an outcome token (`clobTokenId`).
 
@@ -333,13 +349,13 @@ async def get_order_book(token_id: str) -> dict[str, Any]:
     return await _serialize(_require_service().order_book(token_id))
 
 
-@mcp.tool()
+@read_tool("Get last trade price")
 async def get_last_trade_price(token_id: str) -> dict[str, Any]:
     """Last traded price for an outcome token - live CLOB, more current than Gamma's cached `bestBid`/`bestAsk`."""
     return await _serialize(_require_service().last_trade_price(token_id))
 
 
-@mcp.tool()
+@read_tool("Get price history")
 async def get_prices_history(
     token_id: str,
     interval: str | None = None,
@@ -365,7 +381,7 @@ async def get_prices_history(
 # --------------------------------------------------------------------------- #
 # Research
 # --------------------------------------------------------------------------- #
-@mcp.tool()
+@read_tool("Search Polymarket")
 async def search(
     q: str,
     limit_per_type: int | None = None,
@@ -401,7 +417,7 @@ async def search(
     )
 
 
-@mcp.tool()
+@read_tool("Get event comments")
 async def get_comments(
     event_id: int,
     limit: int = 50,
@@ -417,7 +433,7 @@ async def get_comments(
     )
 
 
-@mcp.tool()
+@read_tool("Get top holders")
 async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
     """Top holders for a market (`conditionId`), grouped per outcome token.
 
