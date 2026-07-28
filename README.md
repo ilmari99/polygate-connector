@@ -1,372 +1,152 @@
-# PolyGate
+# Polymarket Research MCP
 
-**Trade [Polymarket](https://polymarket.com) from any LLM that speaks MCP.**
+**Read-only [Polymarket](https://polymarket.com) prediction-market data for
+Claude and any MCP host.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
-![MCP](https://img.shields.io/badge/MCP-compatible-6E56CF.svg)
 
-PolyGate is a [Model Context Protocol](https://modelcontextprotocol.io) server
-that gives your AI agent Polymarket as a set of tools. Point any MCP-capable host
-(Claude Desktop, Claude Code, VS Code, Cursor, OpenClaw, …) at it,
-and your agent can:
+Fourteen read-only tools over Polymarket's public APIs: search, market and
+event listings, order books, prices, price history, top holders, and
+comments. No account, wallet, or API key - the server holds no user data at
+all.
 
-- **research markets** — search, list, and read events, markets, and resolution rules;
-- **read live prices** — order book, midpoint, spread, last trade, price history;
-- **inspect your account** — positions, balance, portfolio value, orders, activity;
-- **trade** — buy, sell, and manage real orders on your own Polymarket account.
+This is the connector-directory fork of [polygate](https://github.com/ilmari99/polygate),
+with every trading and account capability removed at the source level (not
+merely disabled). If you want to trade Polymarket from an LLM with your own
+wallet, use upstream `polygate` instead.
 
-It uses **your** Polymarket account. Researching and reading markets needs no
-credentials — run it key-free to explore. To let the agent **trade**, you supply
-two values (your funding address and signer key); PolyGate then signs orders,
-derives credentials, and detects your signature type for you — all in memory at
-startup. There's no HTTP
-server to run, no port to open, and no API key for the agent to manage. All your trades
-will also be visible on Polymarket.com, and you can use the site to manage your account as usual.
+> **Not financial advice.** This server returns public market data. Nothing it
+> returns is investment advice or a recommendation to trade. See
+> [DISCLAIMER.md](DISCLAIMER.md).
 
-> **Real money.** Once your funded wallet is configured, the trading tools spend
-> real funds on your Polymarket account.
+## Add to Claude
 
-## Quick start
+Settings → Connectors → **Add custom connector**, then enter the server URL:
 
-There are two ways to give your AI PolyGate's tools — pick one:
-
-- **[Connect a web AI](#connect-a-web-ai)** — for AIs that run in a website
-  (ChatGPT, Claude, Grok, …). Run one command and paste three values into the
-  site. No config file to edit. **Lowest barrier.**
-- **[Run as a local MCP server](#run-as-a-local-mcp-server)** — for desktop/IDE
-  hosts (Claude Desktop, Claude Code, VS Code, Cursor, OpenClaw). Add a small JSON
-  block to the host's config.
-
-Either way, the only tool you install is **[uv](https://docs.astral.sh/uv/)** —
-`uvx`. The web AI path needs one more tool, **cloudflared** —
-covered in that section below.
-
-<details open>
-<summary><b>macOS</b></summary>
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+https://<your-host>/mcp
 ```
 
-Or with [Homebrew](https://brew.sh): `brew install uv`.
-</details>
+No authentication is required. Ask Claude things like:
 
-<details>
-<summary><b>Linux</b></summary>
+1. *"What are the highest-volume Polymarket markets about the 2026 US midterms?"*
+2. *"Show me the order book and recent price history for the leading outcome."*
+3. *"Who are the top holders on each side, and what does the comment section think?"*
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-</details>
+## Tools
 
-<details>
-<summary><b>Windows</b></summary>
+| Tool | What it returns |
+|---|---|
+| `search` | Full-text search over events, one row per event |
+| `list_markets` | A page of markets (question, prices, volume, `conditionId`) |
+| `get_market` | One market by `conditionId`: status, outcomes, prices, token ids |
+| `list_events` | A page of events with market counts and top markets |
+| `get_event` | One event (by slug or id) with its complete market list |
+| `list_series` | Catalog of recurring event series (Fed decisions, leagues, ...) |
+| `list_tags` | The category tags listings can filter by |
+| `collect_markets` | Every market under one series / tag / event, flattened |
+| `get_order_book` | Best bid/ask, spread, midpoint, top 5 levels with depth |
+| `get_last_trade_price` | Live last-traded price for an outcome token |
+| `get_prices_history` | Price history, summarized (raw points on request) |
+| `get_holders` | Top holders per outcome for a market |
+| `get_comments` | Public comments on an event |
+| `health` | Server status and upstream hosts |
 
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
+Every tool is annotated read-only. List tools return one small page by
+default (with `next_offset` to page on) and render as compact markdown
+tables; `verbosity="compact"` or `"full"` returns progressively fuller JSON.
+Responses are capped at 100KB, always with an explicit truncation notice.
+The `polymarket://data-model` resource documents the entity hierarchy and
+field glossary.
 
-Or with [winget](https://learn.microsoft.com/windows/package-manager/):
-`winget install --id=astral-sh.uv -e`.
-</details>
-
-`uvx` (bundled with uv) fetches and runs PolyGate on demand — no clone, no
-`pip install`.
-
-## Connect a web AI
-
-For an AI that runs in a browser (ChatGPT, Claude, Grok, …), `polygate connect`
-exposes PolyGate at a public HTTPS MCP URL with OAuth credentials — nothing to
-configure in a file. It needs one extra dependency, **cloudflared** (the tunnel):
-
-| OS | Install `cloudflared` |
-| --- | --- |
-| macOS | `brew install cloudflared` |
-| Windows | `winget install --id Cloudflare.cloudflared` |
-| Linux | Debian/Ubuntu: download Cloudflare's latest `cloudflared-linux-amd64.deb` and run `sudo dpkg -i cloudflared-linux-amd64.deb`; Fedora/RHEL: install the latest `cloudflared-linux-x86_64.rpm` with `sudo rpm -i ...` |
-
-**Optional first step — connect a wallet to enable trading.** Skip this to stay
-research-only (search, prices, and market data need no wallet or keys). To let
-the web AI place real orders, connect your Polymarket wallet once:
-
-```bash
-uvx --from git+https://github.com/ilmari99/polygate@v0.5.0 polygate setup
-```
-
-**Start the connector.** For research and reading only:
-
-```bash
-uvx --from git+https://github.com/ilmari99/polygate@v0.5.0 polygate connect
-```
-
-If you connected a wallet above and want the AI to trade, add `--allow-trading`
-(you'll be asked to type a confirmation phrase in the terminal before trading
-turns on):
-
-```bash
-uvx --from git+https://github.com/ilmari99/polygate@v0.5.0 polygate connect --allow-trading
-```
-
-Either command starts a loopback MCP server, opens a temporary Cloudflare HTTPS
-tunnel, provisions OAuth credentials, and prints a connection card:
-
-```text
-MCP URL / Server URL:         https://random.trycloudflare.com/mcp
-Client ID / OAuth ID:         polygate-...
-Client secret / OAuth secret: pg_secret_...   (treat this like a password)
-Mode:                         RESEARCH ONLY
-```
-
-Paste the card's **MCP URL**, **Client ID**, and **Client secret** into your web
-AI's custom-connector screen:
-
-- **Claude**: follow the step-by-step walkthrough below.
-- **ChatGPT**: enable developer/custom connectors, add an MCP server, then use
-  the card's **MCP URL** as the server URL and the **Client ID** / **Client
-  secret** as the user-defined OAuth client.
-- **Grok**: create a custom remote MCP connector, paste the **MCP URL**, and use
-  the card's **Client ID** and **Client secret** for OAuth.
-
-### Add PolyGate to Claude (web)
-
-Keep the `polygate connect` terminal open so its connection card stays visible,
-then in [claude.ai](https://claude.ai):
-
-1. Click the **+** button at the bottom-left of the chat box, then choose
-   **Connectors → Add connector → Add custom connector**.
-
-   ![Claude: + menu → Connectors → Add connector → Add custom connector](assets/connectors-add-custom.png)
-
-2. In the dialog, paste the three values from the connection card: the **MCP URL**
-   (e.g. `https://random.trycloudflare.com/mcp`) as the server URL, and the
-   **Client ID** and **Client secret** as the OAuth client credentials. Save.
-
-3. Open the **+** menu again and choose **Connectors → Manage connectors**, then
-   click **Connect** next to **polygate**. Claude opens the authorization page —
-   click **Authorize** to finish.
-
-   ![Claude: Manage connectors → Connect polygate](assets/connectors-manage-connect.png)
-
-PolyGate's research tools now appear in Claude; if you started with
-`--allow-trading`, the place/cancel-order tools appear too.
-
-The command runs until Ctrl-C, which stops the tunnel and disconnects the web AI.
-Re-running reuses the same OAuth credentials; use `--new-credentials` to rotate
-them.
-
-## Run as a local MCP server
-
-For a desktop or IDE host, add PolyGate to the host's MCP config. To **research
-and read** markets — no Polymarket account or keys needed — paste this in:
+## Run locally over stdio
 
 ```json
 {
   "mcpServers": {
-    "polygate": {
+    "polymarket-research": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.5.0", "polygate-mcp"]
+      "args": ["--from", "git+https://github.com/ilmari99/polygate-claude-connector", "polygate-connector-stdio"]
     }
   }
 }
 ```
 
-Reload your host and the market-data, price, and research tools appear.
+## Self-host over HTTPS
 
-### Add your wallet to trade
+The HTTP entry point serves Streamable HTTP at `/mcp` with DNS-rebinding
+protection and per-IP rate limiting built in. It needs one setting:
+`PUBLIC_HOST`, the public hostname requests will arrive with.
 
-Credentials are needed **only for trading**. To let the agent place and cancel
-orders on **your** Polymarket account, add an `env` block with two values from
-[polymarket.com](https://polymarket.com):
-
-- **Funder address** — Settings → Profile → Address (`0x…`).
-- **Private key** — Settings → Account → Private Key. **Keep it secret.**
-
-```json
-{
-  "mcpServers": {
-    "polygate": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.5.0", "polygate-mcp"],
-      "env": {
-        "FUNDER_ADDRESS": "0xYourFundingAddress",
-        "PRIVATE_KEY": "0xYourSignerPrivateKey"
-      }
-    }
-  }
-}
+```bash
+pip install .
+PUBLIC_HOST=mcp.example.com polygate-connector   # binds 127.0.0.1:8765
 ```
 
-These are environment variables your host passes to the PolyGate process; they
-stay in a local config file on your machine.
+Or containerized, with the hardened flags:
 
-This `mcpServers` shape is the de-facto standard and works in Claude Desktop,
-Claude Code, Cursor, and most MCP hosts. **VS Code is the exception** — see
-[Other hosts](#other-hosts) below.
-
-## Talk to your agent
-
-Once the tools are loaded, just ask anything about Polymarket. For example:
-
-- "Find the most-traded live markets right now."
-- "Suggest markets where there is an edge and latest news havent been priced in correctly."
-- "How is my portfolio performing?"
-- "Buy 500 YES shares for France winning the World Cup."
-
-> Want the model to understand *how* to trade before it starts — Polymarket's
-> tokens-vs-markets model, the price-is-probability idea, common footguns, and
-> keeping a memory of what it learns — hand it [`llm.md`](llm.md), an optional
-> briefing written for the agent.
-
-## Navigating Polymarket
-
-Polymarket has one containment and two cross-cutting groupings — PolyGate exposes
-each so an agent can find *everything*, not just what full-text search surfaces:
-
-- **Market** — the atomic tradable question (a `0x…` `conditionId`, its
-  `clobTokenIds`). Prices and orders are always per outcome token.
-- **Event** — a "market page" grouping one or more markets.
-- **Tags** and **Series** — two independent groupings *over* events. Tags are flat
-  categories; a **series** is a recurring or multi-part set (each Fed decision, a
-  monthly BTC strike ladder, a tournament's fixtures). `gameId` is not a level — it
-  is a sports-only *attribute* that a game's sibling events share.
-
-Because Polymarket splits one topic across several separate events (a match's
-moneyline, spread, and totals are distinct events), opening one event or searching
-shows only a fragment. Two ways to navigate:
-
-- **Deepen:** `list_tags` / `list_series` → `list_events(tag_id=/series_id=)` →
-  `get_event` → its markets.
-- **Flatten:** `collect_markets(series_id=|tag_id=|event=)` returns every atomic
-  market under one scope in a single list. For a sports game,
-  `collect_markets(event=<slug>, group_by="gameId")` gathers all its sub-markets at
-  once.
-
-## How it works
-
-Every tool is a thin wrapper over one in-process core, `PolymarketService`, which
-owns all upstream access:
-
-```mermaid
-flowchart LR
-    Host["Your MCP host\n(agent)"] -- "MCP tools (stdio)" --> Core["PolyGate core\n(PolymarketService)"]
-    Core --> Gamma["Gamma API\n(markets, events)"]
-    Core --> CLOB["CLOB API\n(book, orders — signed)"]
-    Core --> Data["Data API\n(positions, activity)"]
+```bash
+docker build -t polygate-connector .
+docker run --rm --read-only --tmpfs /tmp --cap-drop=ALL \
+  -p 127.0.0.1:8765:8765 -e PUBLIC_HOST=mcp.example.com polygate-connector
 ```
 
-Trading on Polymarket involves two addresses, and you provide both:
+Expose it with a [Cloudflare named tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+(no inbound ports, TLS at the edge, stable hostname):
 
-- **Your signer** (`PRIVATE_KEY`) — an ordinary Ethereum keypair whose private key
-  **signs** your orders. This is the key polymarket.com reveals under
-  **Settings → Account → Private Key**; if you connected your own wallet, it's that
-  wallet's key. Either way you don't need a new wallet.
-- **Your funder** (`FUNDER_ADDRESS`) — the Polymarket account that actually
-  **holds your USDC** and is the order maker. Your signer controls it; you never
-  get a separate key.
+```bash
+cloudflared tunnel login
+cloudflared tunnel create polygate-mcp
+cloudflared tunnel route dns polygate-mcp mcp.example.com
+cloudflared tunnel run --url http://127.0.0.1:8765 polygate-mcp
+```
 
-At startup the core derives your CLOB API credentials from the signer key and
-**auto-detects your order signature type** — whichever of proxy wallet, connected
-(Safe) wallet, deposit wallet, or plain EOA holds your funds (you need to have funds) — so orders are signed
-correctly with no on-chain setup, token allowances, or separate RPC. Because the
-wallet is passed in fresh through the `env` block each start, these credentials are
-derived in memory and **never written elsewhere**.
-
-The core only **reads market/account data** and **places orders**. It does
-not manage your wallet, handle deposits or withdrawals, sign any transaction other
-than an order, or contain any trading logic. It's an abstraction over
-Polymarket's APIs so you can build your own agent, without losing any
-features inherent to the Polymarket platform.
+Your connector URL is then `https://mcp.example.com/mcp`. Verify from outside
+your own network before sharing it.
 
 ## Configuration
 
-All settings are environment variables set in the `env` block of your MCP config
-(as in the Quick start):
+All configuration is by environment variable (or a local `.env`); there are
+no secrets.
 
-| Variable          | Required | Description                                              |
-| ----------------- | :------: | -------------------------------------------------------- |
-| `PRIVATE_KEY`     | for trading | Signer key. **Keep secret.** |
-| `FUNDER_ADDRESS`  | for trading | The address that holds your funds and makes your orders. |
-| `DRY_RUN`         |    no    | `true` simulates orders without signing or sending them. |
-| `LOG_LEVEL`       |    no    | Logging level (default `INFO`).                          |
-| `SIGNATURE_TYPE`, `CLOB_API_KEY`, `CLOB_SECRET`, `CLOB_PASSPHRASE` | auto | Derived/detected in memory at startup; set only to override. |
+| Variable | Default | Meaning |
+|---|---|---|
+| `PUBLIC_HOST` | *(unset)* | Public hostname; required for HTTP serving |
+| `BIND_HOST` / `BIND_PORT` | `127.0.0.1` / `8765` | Where uvicorn listens |
+| `RATE_LIMIT_PER_IP` | `60/minute` | slowapi per-client limit |
+| `RATE_LIMIT_GLOBAL` | `600/minute` | slowapi whole-server limit |
+| `UPSTREAM_CONCURRENCY` | `8` | Max in-flight requests to Polymarket |
+| `HTTP_TIMEOUT_SECONDS` / `HTTP_MAX_RETRIES` | `15` / `3` | Outbound HTTP behaviour |
+| `GAMMA_HOST` / `CLOB_HOST` / `DATA_HOST` | Polymarket production | Upstream API hosts |
+| `LOG_LEVEL` | `INFO` | Logging verbosity |
 
-Market-data and research tools (`list_markets`, `get_order_book`, `collect_markets`,
-`search`, `get_holders`, …) work **without a wallet**. Account and trading tools
-(`get_positions`, `get_balance`, `place_order`, `cancel_order`, …) require
-`PRIVATE_KEY` and `FUNDER_ADDRESS`. Use `DRY_RUN=true` to exercise `place_order`
-safely.
+Upstream responses are cached briefly in-process (45s for catalog listings,
+5min for search, 15s for live order-book data) to stay fast and polite to
+Polymarket's APIs.
 
-> Prices and orders are always per **outcome token** (`clobTokenId`), never per
-> market. A share pays $1 if its outcome happens and $0 if not, so a token's price
-> is the market's implied probability.
+## Data handling
 
-## Other hosts
+No accounts, no user data, no query logging. The server keeps operational
+logs of tool name, duration, and status only - never arguments, results, or
+IP addresses beyond transient rate limiting. Queries are forwarded to
+Polymarket's public APIs. Full policy: [docs/privacy-policy.md](docs/privacy-policy.md).
 
-The Quick-start JSON works as-is for Claude Desktop, Claude Code, Cursor, and most
-MCP hosts. Two cases differ:
+## Support
 
-**VS Code (Copilot)** uses a `servers` key (not `mcpServers`) and a `type` field.
-Put this in `.vscode/mcp.json`, then reload the window:
-
-```json
-{
-  "servers": {
-    "polygate": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.5.0", "polygate-mcp"],
-      "env": {
-        "FUNDER_ADDRESS": "0xYourFundingAddress",
-        "PRIVATE_KEY": "0xYourSignerPrivateKey"
-      }
-    }
-  }
-}
-```
-
-**Running your own checkout** (while developing PolyGate): point `--from` at a
-local path instead of the git URL — `uvx --from /path/to/polygate polygate-mcp`.
-
-## Optional: REST gateway for algorithmic trading
-
-The same core is also exposed as a language-agnostic **REST gateway** (FastAPI),
-for clients that aren't MCP hosts — e.g. an algorithmic trading bot in another
-language that drives PolyGate over plain HTTP. It offers identical capabilities,
-protected by a generated `PLATFORM_API_KEY`.
-
-```bash
-git clone https://github.com/ilmari99/polygate.git && cd polygate
-python -m venv .venv && source .venv/bin/activate
-pip install .
-polygate        # serves http://127.0.0.1:8000, interactive docs at /docs
-```
-
-Connect your wallet at `http://127.0.0.1:8000/setup` (on your own machine) or with
-`polygate setup` (remote/SSH), then drive it over HTTP.
-[examples/sample_agent.py](examples/sample_agent.py) is a runnable, dependency-free
-reference for the read → decide → order loop, and the full endpoint reference is at
-`/docs` once the server is running.
+Open an issue: <https://github.com/ilmari99/polygate-claude-connector/issues>.
+Reviewer/test instructions live in [docs/reviewer-guide.md](docs/reviewer-guide.md).
 
 ## Development
 
 ```bash
-git clone https://github.com/ilmari99/polygate.git && cd polygate
-pip install ".[dev]"
-pytest -q
+pip install -e '.[dev]'
+pytest                                   # offline; includes payload budgets
+python scripts/measure_payloads.py       # live payload size report
 ```
 
-The suite runs fully offline (HTTP is mocked) and exercises the `DRY_RUN` switch,
-which simulates orders without signing or sending them.
-
-## Safety
-
-- Your `PRIVATE_KEY` controls your funds. It lives in the `env` block of your MCP
-  config, in a local file on your own machine — that's fine; just don't commit a
-  config file containing it to a shared or public repository. Exposing the `PRIVATE_KEY` publicly risks your funds.
-- Trading tools spend real money once a funded wallet is configured. Keep
-  `DRY_RUN=true` while testing, and have your agent confirm orders before placing.
+CI fails if any trading symbol, wallet variable, or signing dependency
+reappears under `src/`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
