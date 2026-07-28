@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -54,18 +55,38 @@ def _require_service() -> PolymarketService:
     return _service
 
 
-async def _serialize(awaitable: Any) -> dict[str, Any]:
-    """Await a core operation and return a JSON-able dict for the MCP host.
+async def _run_tool(name: str, awaitable: Awaitable[Any]) -> dict[str, Any]:
+    """Await a tool operation and always return a JSON-able dict.
 
-    Maps a handled :class:`PlatformError` to ``{error, detail}`` so the model
-    always receives a structured result instead of an opaque exception, and dumps
-    pydantic results (response envelopes, order results) to plain JSON types.
+    A :class:`PlatformError` surfaces as its stable ``code`` with an actionable
+    ``detail``; any other exception becomes ``internal_error`` - the traceback
+    is logged server-side and never sent to the client. One log line per call
+    records the tool name, duration, and status; arguments and results are
+    never logged.
     """
+    started = time.perf_counter()
+    status = "ok"
     try:
         result = await awaitable
     except PlatformError as exc:
+        status = exc.code
         return {"error": exc.code, "detail": exc.message}
-    return result.model_dump(mode="json")
+    except Exception:  # noqa: BLE001 - a bare 500 to the client fails review
+        status = "internal_error"
+        log.exception("Tool %s failed unexpectedly.", name)
+        return {
+            "error": "internal_error",
+            "detail": f"{name} hit an unexpected server error. Retry; if it "
+            "persists, report it on the support channel.",
+        }
+    finally:
+        log.info(
+            "tool=%s duration_ms=%.0f status=%s",
+            name,
+            (time.perf_counter() - started) * 1000,
+            status,
+        )
+    return result if isinstance(result, dict) else result.model_dump(mode="json")
 
 
 @asynccontextmanager
@@ -203,7 +224,7 @@ async def list_markets(
     descriptions, images, AMM internals - are dropped); pass `compact=False` for
     the full objects.
     """
-    return await _serialize(
+    return await _run_tool("list_markets", 
         _require_service().list_markets(
             active=active,
             closed=closed,
@@ -229,7 +250,7 @@ async def get_market(condition_id: str, compact: bool = True) -> dict[str, Any]:
     fee params (`makerBaseFee`/`takerBaseFee` in basis points, `feesEnabled`).
     Compact by default; pass `compact=False` for every field.
     """
-    return await _serialize(_require_service().get_market(condition_id, compact=compact))
+    return await _run_tool("get_market", _require_service().get_market(condition_id, compact=compact))
 
 
 @read_tool("List events")
@@ -251,7 +272,7 @@ async def list_events(
     Gamma's per-page cap. Compact by default (low-signal fields dropped and the
     nested markets compacted); pass `compact=False` for full objects.
     """
-    return await _serialize(
+    return await _run_tool("list_events", 
         _require_service().list_events(
             active=active,
             closed=closed,
@@ -274,7 +295,7 @@ async def get_event(key: str, compact: bool = True) -> dict[str, Any]:
     then read its `series`/`gameId` to navigate to related events. Compact by
     default; pass `compact=False` for every field.
     """
-    return await _serialize(_require_service().get_event(key, compact=compact))
+    return await _run_tool("get_event", _require_service().get_event(key, compact=compact))
 
 
 @read_tool("List series")
@@ -287,7 +308,7 @@ async def list_series(limit: int = 100, offset: int = 0, compact: bool = True) -
     series with `list_events(series_id=...)` or flatten it with
     `collect_markets(series_id=...)`.
     """
-    return await _serialize(
+    return await _run_tool("list_series", 
         _require_service().list_series(limit=limit, offset=offset, compact=compact)
     )
 
@@ -319,7 +340,7 @@ async def collect_markets(
     to completion and errors if the scope is too broad - never silently partial.
     Compact by default; pass `compact=False` for full objects.
     """
-    return await _serialize(
+    return await _run_tool("collect_markets", 
         _require_service().collect_markets(
             series_id=series_id,
             tag_id=tag_id,
@@ -335,7 +356,7 @@ async def collect_markets(
 @read_tool("List categories")
 async def list_tags() -> dict[str, Any]:
     """List the category tags markets can be filtered by."""
-    return await _serialize(_require_service().list_tags())
+    return await _run_tool("list_tags", _require_service().list_tags())
 
 
 @read_tool("Get order book")
@@ -346,13 +367,13 @@ async def get_order_book(token_id: str) -> dict[str, Any]:
     (with sizes), `midpoint` (fair value), and `spread`.
     To buy you pay `best_ask`; to sell you get `best_bid`.
     """
-    return await _serialize(_require_service().order_book(token_id))
+    return await _run_tool("get_order_book", _require_service().order_book(token_id))
 
 
 @read_tool("Get last trade price")
 async def get_last_trade_price(token_id: str) -> dict[str, Any]:
     """Last traded price for an outcome token - live CLOB, more current than Gamma's cached `bestBid`/`bestAsk`."""
-    return await _serialize(_require_service().last_trade_price(token_id))
+    return await _run_tool("get_last_trade_price", _require_service().last_trade_price(token_id))
 
 
 @read_tool("Get price history")
@@ -371,7 +392,7 @@ async def get_prices_history(
     resolution; the applied `interval` is echoed back in the payload so you know
     the span you received.
     """
-    return await _serialize(
+    return await _run_tool("get_prices_history", 
         _require_service().prices_history(
             token_id, interval=interval, start_ts=start_ts, end_ts=end_ts, fidelity=fidelity
         )
@@ -405,7 +426,7 @@ async def search(
     may be e.g. 'active' or 'resolved'. Compact by default; pass `compact=False`
     for full objects.
     """
-    return await _serialize(
+    return await _run_tool("search", 
         _require_service().search(
             q,
             limit_per_type=limit_per_type,
@@ -426,7 +447,7 @@ async def get_comments(
     ascending: bool | None = None,
 ) -> dict[str, Any]:
     """Public comments on an event (by its numeric event id). Unverified sentiment."""
-    return await _serialize(
+    return await _run_tool("get_comments", 
         _require_service().comments(
             event_id, limit=limit, offset=offset, order=order, ascending=ascending
         )
@@ -440,7 +461,7 @@ async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
     Each holder has `amount`, `outcomeIndex`, `proxyWallet`, `pseudonym` - a
     signal about how much money sits on each side.
     """
-    return await _serialize(_require_service().holders(condition_id, limit=limit))
+    return await _run_tool("get_holders", _require_service().holders(condition_id, limit=limit))
 
 
 def run() -> None:
