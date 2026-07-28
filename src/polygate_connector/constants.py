@@ -30,6 +30,11 @@ DEFAULT_PRICES_HISTORY_FIDELITY = 60  # minutes (hourly)
 # so we raise rather than silently return an incomplete set.
 MARKET_SCAN_MAX_EVENTS = 5000
 
+# Wall-clock budget for one collect_markets call. The scan pages upstream
+# sequentially, so a broad scope could otherwise outlive the MCP client's
+# request timeout; past the deadline it fails loud with narrowing guidance.
+COLLECT_SCAN_DEADLINE_SECONDS = 20.0
+
 # --- List defaults and bounds ---
 # Response size is a connector review criterion: list tools default small and
 # page, rather than defaulting large. The caller's limit is clamped server-side

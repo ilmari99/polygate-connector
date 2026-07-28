@@ -35,9 +35,11 @@ class ListPage(BaseModel):
 
     ``rows`` is a list of projected row dicts (or, on the wire for some tools
     in minimal verbosity, a rendered markdown table string). ``next_offset`` /
-    ``next_page`` are present only when another page exists; ``truncated``
-    flags any server-side reduction (a clamped limit or a size cap), so the
-    model knows the result is not the complete set.
+    ``next_page`` are present only when another page exists. ``truncated``
+    flags a server-side reduction ONLY (a clamped limit or a size cap) - a
+    merely-full page is signalled by ``next_offset``, not ``truncated``.
+    ``context`` carries small tool-specific metadata (e.g. the resolved scope
+    of a collect).
     """
 
     rows: Any
@@ -46,6 +48,7 @@ class ListPage(BaseModel):
     next_page: int | None = None
     truncated: bool = False
     notice: str | None = None
+    context: dict[str, Any] | None = None
     fetched_at: datetime = Field(default_factory=_utcnow)
     source: str = Field(description="Which upstream produced the data, e.g. 'gamma'.")
 
@@ -59,6 +62,7 @@ class ListPage(BaseModel):
         next_page: int | None = None,
         truncated: bool = False,
         notice: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> "ListPage":
         return cls(
             rows=rows,
@@ -67,6 +71,7 @@ class ListPage(BaseModel):
             next_page=next_page,
             truncated=truncated,
             notice=notice,
+            context=context,
             fetched_at=_utcnow(),
             source=source,
         )

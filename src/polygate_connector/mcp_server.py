@@ -85,7 +85,15 @@ async def _run_tool(
     started = time.perf_counter()
     status = "ok"
     try:
+        # Serialization, table rendering, and the size cap stay inside the
+        # try: a failure in any of them must surface as a typed error too,
+        # and must not be logged as ok.
         result = await awaitable
+        if not isinstance(result, dict):
+            result = result.model_dump(mode="json", exclude_none=True)
+        if table is not None and isinstance(result.get("rows"), list):
+            result["rows"] = markdown_table(result["rows"], table)
+        return enforce_size_cap(result)
     except PlatformError as exc:
         status = exc.code
         return {"error": exc.code, "detail": exc.message}
@@ -104,11 +112,6 @@ async def _run_tool(
             (time.perf_counter() - started) * 1000,
             status,
         )
-    if not isinstance(result, dict):
-        result = result.model_dump(mode="json", exclude_none=True)
-    if table is not None and isinstance(result.get("rows"), list):
-        result["rows"] = markdown_table(result["rows"], table)
-    return enforce_size_cap(result)
 
 
 @asynccontextmanager
@@ -400,9 +403,11 @@ async def collect_markets(
       fixture's moneyline, spread, totals, ...). `group_by` names any event
       attribute - no key is hardcoded.
 
-    Each returned market is tagged with its parent `event_id`/`event_title`/
-    `event_slug` and carries its `conditionId`. The scan runs to completion and
-    errors if the scope is too broad - never silently partial.
+    Rows are the flat markets, each tagged with its parent `event_id`/
+    `event_title`/`event_slug` and carrying its `conditionId`; `context`
+    echoes the resolved scope and event count. The scan runs to completion
+    and errors (with narrowing guidance) if the scope is too broad or too
+    slow to gather - never silently partial.
     """
     return await _run_tool(
         "collect_markets",

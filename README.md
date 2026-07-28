@@ -88,6 +88,7 @@ Or containerized, with the hardened flags:
 ```bash
 docker build -t polygate-connector .
 docker run --rm --read-only --tmpfs /tmp --cap-drop=ALL \
+  --security-opt=no-new-privileges \
   -p 127.0.0.1:8765:8765 -e PUBLIC_HOST=mcp.example.com polygate-connector
 ```
 
@@ -113,8 +114,9 @@ no secrets.
 |---|---|---|
 | `PUBLIC_HOST` | *(unset)* | Public hostname; required for HTTP serving |
 | `BIND_HOST` / `BIND_PORT` | `127.0.0.1` / `8765` | Where uvicorn listens |
-| `RATE_LIMIT_PER_IP` | `60/minute` | slowapi per-client limit |
-| `RATE_LIMIT_GLOBAL` | `600/minute` | slowapi whole-server limit |
+| `RATE_LIMIT_PER_IP` | `300/minute` | Loose per-client backstop (connector traffic shares egress IPs) |
+| `RATE_LIMIT_GLOBAL` | `600/minute` | slowapi whole-server limit - the binding one |
+| `TRUST_PROXY_HEADERS` | `true` | Use `CF-Connecting-IP`/`X-Forwarded-For` as the client IP; disable if clients reach the process directly |
 | `UPSTREAM_CONCURRENCY` | `8` | Max in-flight requests to Polymarket |
 | `HTTP_TIMEOUT_SECONDS` / `HTTP_MAX_RETRIES` | `15` / `3` | Outbound HTTP behaviour |
 | `GAMMA_HOST` / `CLOB_HOST` / `DATA_HOST` | Polymarket production | Upstream API hosts |

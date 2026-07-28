@@ -28,19 +28,26 @@ from .config import Settings, get_settings
 from .core.errors import ConfigurationError
 
 
-def _client_ip(request: Request) -> str:
-    """The real client IP for rate limiting.
+def _client_ip_factory(trust_proxy_headers: bool):
+    """Build the rate-limit key function.
 
     Behind the tunnel every request's socket address is the local cloudflared,
-    so without header awareness the per-IP limit degrades into a global one.
+    so without header awareness the per-IP limit degrades into a global one;
     ``CF-Connecting-IP`` is set by Cloudflare and not spoofable through it.
+    On a deployment where clients reach the process directly, header trust
+    must be off or the limit becomes spoofable.
     """
-    forwarded = request.headers.get("CF-Connecting-IP") or request.headers.get(
-        "X-Forwarded-For", ""
-    )
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+
+    def _client_ip(request: Request) -> str:
+        if trust_proxy_headers:
+            forwarded = request.headers.get("CF-Connecting-IP") or request.headers.get(
+                "X-Forwarded-For", ""
+            )
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
+
+    return _client_ip
 
 
 def _rate_limited(_request: Request, exc: RateLimitExceeded) -> Response:
@@ -81,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Polymarket Research MCP", version=__version__, lifespan=lifespan)
     app.state.limiter = Limiter(
-        key_func=_client_ip,
+        key_func=_client_ip_factory(settings.trust_proxy_headers),
         default_limits=[settings.rate_limit_per_ip],
         application_limits=[settings.rate_limit_global],
     )

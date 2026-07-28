@@ -6,6 +6,7 @@
 #
 #   docker build -t polygate-connector .
 #   docker run --rm --read-only --tmpfs /tmp --cap-drop=ALL \
+#     --security-opt=no-new-privileges \
 #     -p 127.0.0.1:8765:8765 -e PUBLIC_HOST=mcp.example.com polygate-connector
 
 FROM python:3.12-slim

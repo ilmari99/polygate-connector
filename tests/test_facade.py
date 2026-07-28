@@ -166,7 +166,7 @@ async def test_search_minimal_rows_are_event_summaries(monkeypatch):
     assert row["market_count"] == 1
     assert row["top_markets"][0]["liquidityNum"] == 3.0
     assert page.next_page == 2  # upstream said hasMore
-    assert page.truncated is True
+    assert page.truncated is False  # more-exists is next_page's job, not truncated's
     await svc.aclose()
 
 
@@ -175,4 +175,41 @@ async def test_search_full_keeps_raw_events(monkeypatch):
     page = await svc.search("q", verbosity="full")
     # Full rows keep nested markets (token ids decoded by clean_event).
     assert page.rows[0]["markets"][0]["clobTokenIds"] == ["1"]
+    await svc.aclose()
+
+
+# --- holders clamp is announced ---
+
+
+async def test_holders_clamp_sets_truncated(monkeypatch):
+    svc = _service(monkeypatch, [{"token": "t", "holders": [
+        {"pseudonym": "A", "amount": 1.0, "outcomeIndex": 0},
+    ]}])
+    page = await svc.holders("0xabc", limit=500)
+    assert svc._last_params["limit"] == 100  # clamped before the upstream call
+    assert page.truncated is True
+    unclamped = await svc.holders("0xabc", limit=5)
+    assert unclamped.truncated is False
+    await svc.aclose()
+
+
+# --- collect_markets wall-clock deadline ---
+
+
+async def test_collect_markets_deadline_fails_loud(monkeypatch):
+    from polygate_connector.core.errors import ValidationError
+    from polygate_connector.services import facade as facade_module
+
+    # Clock jumps far ahead on every read, so the deadline expires before the
+    # first scan page completes.
+    clock = {"now": 0.0}
+
+    def fake_monotonic():
+        clock["now"] += 1000.0
+        return clock["now"]
+
+    monkeypatch.setattr(facade_module, "monotonic", fake_monotonic)
+    svc = _service(monkeypatch, [{"id": "e1", "markets": []}])
+    with pytest.raises(ValidationError, match="time budget"):
+        await svc.collect_markets(tag_id=1)
     await svc.aclose()

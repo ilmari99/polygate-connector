@@ -54,8 +54,10 @@ class HttpClient:
             # never holds a concurrency slot.
             async with self._semaphore:
                 resp = await self._client.get(url, params=params)
-            # Only retry on server errors; 4xx are surfaced immediately below.
-            if resp.status_code >= 500:
+            # Retry server errors and rate limiting (with backoff - on a
+            # shared deployment an upstream 429 is the likeliest transient);
+            # other 4xx are surfaced immediately below.
+            if resp.status_code >= 500 or resp.status_code == 429:
                 resp.raise_for_status()
             return resp
 

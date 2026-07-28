@@ -86,3 +86,16 @@ def test_rate_limit_kicks_in():
         codes = [client.get("/healthz").status_code for _ in range(5)]
     assert codes[:3] == [200, 200, 200]
     assert 429 in codes[3:]
+
+
+def test_client_ip_respects_proxy_trust_setting():
+    from types import SimpleNamespace
+
+    request = SimpleNamespace(
+        headers={"CF-Connecting-IP": "203.0.113.9"},
+        client=SimpleNamespace(host="127.0.0.1"),
+    )
+    trusted = serve._client_ip_factory(trust_proxy_headers=True)
+    untrusted = serve._client_ip_factory(trust_proxy_headers=False)
+    assert trusted(request) == "203.0.113.9"
+    assert untrusted(request) == "127.0.0.1"

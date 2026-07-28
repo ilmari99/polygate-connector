@@ -46,11 +46,17 @@ class Settings(BaseSettings):
     # container port mapping) should reach the process directly.
     bind_host: str = Field(default="127.0.0.1")
     bind_port: int = Field(default=8765)
-    # slowapi rate-limit expressions. Stateless MCP is chatty (initialize +
-    # list_tools + every call is a POST), so the per-IP limit leaves headroom
-    # for one busy Claude session.
-    rate_limit_per_ip: str = Field(default="60/minute")
+    # slowapi rate-limit expressions. Directory traffic arrives from a small
+    # set of shared Anthropic egress IPs - many unrelated users per IP - so
+    # the per-IP limit is only a loose abuse backstop; the global limit, the
+    # upstream semaphore, and the cache are the real controls.
+    rate_limit_per_ip: str = Field(default="300/minute")
     rate_limit_global: str = Field(default="600/minute")
+    # Trust CF-Connecting-IP / X-Forwarded-For for the client's real IP.
+    # Correct behind Cloudflare (loopback-bound origin, headers set at the
+    # edge); set false anywhere untrusted clients can reach the process
+    # directly, or the per-IP limit becomes spoofable.
+    trust_proxy_headers: bool = Field(default=True)
 
 
 @lru_cache

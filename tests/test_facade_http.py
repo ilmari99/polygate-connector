@@ -141,12 +141,10 @@ async def test_collect_markets_flattens_a_series(service):
             ],
         )
     )
-    env = await service.collect_markets(series_id=35, verbosity="compact")
-    data = env.data
-    assert data["scope"] == {"series_id": 35}
-    assert data["event_count"] == 2
-    assert data["market_count"] == 3
-    flat = {m["id"]: m for m in data["markets"]}
+    page = await service.collect_markets(series_id=35, verbosity="compact")
+    assert page.context == {"scope": {"series_id": 35}, "event_count": 2}
+    assert page.returned == 3
+    flat = {m["id"]: m for m in page.rows}
     assert flat["m1"]["event_slug"] == "oct"
     assert flat["m1"]["clobTokenIds"] == ["1", "2"]
 
@@ -170,17 +168,16 @@ async def test_collect_markets_event_expands_by_gameid(service):
             httpx.Response(200, json=series_scan),   # _scan_events(series_id=11433)
         ]
     )
-    env = await service.collect_markets(
+    page = await service.collect_markets(
         event="fifwc-bra-nor", group_by="gameId", verbosity="compact"
     )
-    data = env.data
     assert route.calls[0].request.url.params["slug"] == "fifwc-bra-nor"
     assert route.calls[1].request.url.params["series_id"] == "11433"
     # Only the two matching-gameId events; the other fixture dropped.
-    assert data["event_count"] == 2
-    assert {m["id"] for m in data["markets"]} == {"m-money", "m-ou"}
-    assert data["scope"]["group_by"] == "gameId"
-    assert data["scope"]["match_value"] == 90086997
+    assert page.context["event_count"] == 2
+    assert {m["id"] for m in page.rows} == {"m-money", "m-ou"}
+    assert page.context["scope"]["group_by"] == "gameId"
+    assert page.context["scope"]["match_value"] == 90086997
 
 
 async def test_collect_markets_requires_exactly_one_scope(service):
@@ -276,3 +273,22 @@ async def test_holders_routes_to_data_api(service):
     assert page.source == "data"
     # Flattened to one row per holder, projected to the minimal fields.
     assert page.rows[0] == {"pseudonym": "A", "amount": 7.0, "outcomeIndex": 0}
+
+
+@respx.mock
+async def test_upstream_429_is_retried():
+    # Rate limiting is the likeliest transient on a shared deployment; one
+    # backoff retry turns it into a success instead of an error.
+    service = PolymarketService(Settings(http_max_retries=2))
+    route = respx.get(f"{GAMMA}/markets").mock(
+        side_effect=[
+            httpx.Response(429, text="slow down"),
+            httpx.Response(200, json=[{"conditionId": "0x1", "question": "Q"}]),
+        ]
+    )
+    try:
+        page = await service.list_markets()
+    finally:
+        await service.aclose()
+    assert route.call_count == 2
+    assert page.rows[0]["conditionId"] == "0x1"

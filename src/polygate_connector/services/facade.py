@@ -9,10 +9,12 @@ operations return a :class:`ResponseEnvelope`.
 
 from __future__ import annotations
 
+from time import monotonic
 from typing import Any
 
 from ..config import Settings
 from ..constants import (
+    COLLECT_SCAN_DEADLINE_SECONDS,
     DEFAULT_LIST_LIMIT,
     DEFAULT_PRICES_HISTORY_FIDELITY,
     DEFAULT_PRICES_HISTORY_INTERVAL,
@@ -51,8 +53,9 @@ def _page(
 ) -> ListPage:
     """Wrap list rows with pagination metadata.
 
-    A page as long as the requested ``limit`` means the upstream may have more;
-    a short page means it is exhausted.
+    A page as long as the requested ``limit`` means the upstream may have
+    more, signalled by ``next_offset``; ``truncated`` is reserved for actual
+    server-side reductions (here, a clamped limit).
     """
     if not isinstance(rows, list):
         return ListPage.of(rows, source)
@@ -61,7 +64,7 @@ def _page(
         rows,
         source,
         next_offset=offset + len(rows) if full_page else None,
-        truncated=full_page or clamped,
+        truncated=clamped,
     )
 
 
@@ -273,19 +276,31 @@ class PolymarketService:
         return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)
 
     async def _scan_events(
-        self, filters: dict[str, Any], *, active: bool | None, closed: bool | None
+        self,
+        filters: dict[str, Any],
+        *,
+        active: bool | None,
+        closed: bool | None,
+        deadline: float | None = None,
     ) -> list[dict[str, Any]]:
         """Page an ``/events`` filter to COMPLETION for client-side flatten/narrow.
 
         Unlike ``_read_paged`` (which returns a prefix up to ``limit``), this never
         truncates: an incomplete scan would silently drop valid matches when we
         then filter by an attribute Gamma cannot filter for. It fails loud past
-        :data:`MARKET_SCAN_MAX_EVENTS` instead, so a too-broad scope is an error,
-        not a wrong answer.
+        :data:`MARKET_SCAN_MAX_EVENTS` or the wall-clock ``deadline`` instead
+        (both are the caller's scope being too broad, hence validation errors),
+        so the result is complete or an error - never a wrong answer.
         """
         collected: list[dict[str, Any]] = []
         cursor = 0
         while True:
+            if deadline is not None and monotonic() >= deadline:
+                raise ValidationError(
+                    "The scope is too large to gather within the "
+                    f"{COLLECT_SCAN_DEADLINE_SECONDS:.0f}s time budget; narrow it "
+                    "(e.g. use a series_id, a more specific tag, or a single event)."
+                )
             page = await self._read(
                 self._gamma_host,
                 "/events",
@@ -300,7 +315,7 @@ class PolymarketService:
                 break
             cursor += GAMMA_PAGE_LIMIT
             if cursor >= MARKET_SCAN_MAX_EVENTS:
-                raise UpstreamError(
+                raise ValidationError(
                     f"Scope spans more than {MARKET_SCAN_MAX_EVENTS} events; narrow "
                     "it (e.g. use a series_id, or a more specific tag)."
                 )
@@ -316,7 +331,7 @@ class PolymarketService:
         active: bool | None = True,
         closed: bool | None = False,
         verbosity: Verbosity = "minimal",
-    ) -> ResponseEnvelope:
+    ) -> ListPage:
         """Flatten every atomic market under one grouping node into a flat list.
 
         Exactly one scope is required:
@@ -330,11 +345,12 @@ class PolymarketService:
           fixture's sub-markets, since Gamma has no server-side filter for such
           per-event attributes (no key is special-cased; you name the attribute).
 
-        Returns a flat ``markets`` list, each entry tagged with its parent
+        Returns the flat markets as ``rows``, each entry tagged with its parent
         ``event_id``/``event_title``/``event_slug`` so a caller reads every
-        ``conditionId`` directly. The underlying series/tag scan runs to
-        completion (never truncated) and fails loud if the scope is too broad,
-        so the result is complete or an error - never silently partial.
+        ``conditionId`` directly; ``context`` echoes the resolved scope and
+        event count. The underlying series/tag scan runs to completion (never
+        silently partial) and fails loud - with narrowing guidance - if the
+        scope exceeds the event cap or the wall-clock deadline.
         """
         chosen = [(n, v) for n, v in
                   (("series_id", series_id), ("tag_id", tag_id), ("event", event))
@@ -346,16 +362,17 @@ class PolymarketService:
         scope_name, _ = chosen[0]
         if group_by is not None and scope_name != "event":
             raise ValidationError("group_by is only valid together with 'event'.")
+        deadline = monotonic() + COLLECT_SCAN_DEADLINE_SECONDS
 
         scope: dict[str, Any] = {}
         if scope_name == "series_id":
             events = await self._scan_events(
-                {"series_id": series_id}, active=active, closed=closed
+                {"series_id": series_id}, active=active, closed=closed, deadline=deadline
             )
             scope = {"series_id": series_id}
         elif scope_name == "tag_id":
             events = await self._scan_events(
-                {"tag_id": tag_id}, active=active, closed=closed
+                {"tag_id": tag_id}, active=active, closed=closed, deadline=deadline
             )
             scope = {"tag_id": tag_id}
         else:
@@ -372,22 +389,21 @@ class PolymarketService:
                 by_id: dict[Any, dict[str, Any]] = {anchor.get("id"): anchor}
                 for sid in series_ids:
                     for ev in await self._scan_events(
-                        {"series_id": sid}, active=active, closed=closed
+                        {"series_id": sid}, active=active, closed=closed, deadline=deadline
                     ):
                         if ev.get(group_by) == match_value:
                             by_id[ev.get("id")] = ev
                 events = list(by_id.values())
             scope = {"event": event, "group_by": group_by, "match_value": match_value}
 
-        payload = {
-            "scope": scope,
-            "event_count": len(events),
-            "markets": _flatten_search(
-                {"events": [clean_event(e, verbosity=verbosity) for e in events]}
-            )["markets"],
-        }
-        payload["market_count"] = len(payload["markets"])
-        return ResponseEnvelope.of(payload, source="gamma")
+        markets = _flatten_search(
+            {"events": [clean_event(e, verbosity=verbosity) for e in events]}
+        )["markets"]
+        return ListPage.of(
+            markets,
+            "gamma",
+            context={"scope": scope, "event_count": len(events)},
+        )
 
     async def list_tags(self, *, verbosity: Verbosity = "minimal") -> ListPage:
         data = await self._read(self._gamma_host, "/tags", "gamma")
@@ -484,7 +500,7 @@ class PolymarketService:
             rows,
             "gamma",
             next_page=(page or 1) + 1 if has_more else None,
-            truncated=has_more or clamped,
+            truncated=clamped,
         )
 
     async def comments(
@@ -524,7 +540,9 @@ class PolymarketService:
         data = await self._read(
             self._data_host, "/holders", "data", {"market": condition_id, "limit": limit}
         )
-        return ListPage.of(flatten_holders(data, verbosity=verbosity), "data")
+        return ListPage.of(
+            flatten_holders(data, verbosity=verbosity), "data", truncated=clamped
+        )
 
 
 def _flatten_search(data: Any) -> Any:
