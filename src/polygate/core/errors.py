@@ -46,8 +46,3 @@ class NotFoundError(PlatformError):
 class ValidationError(PlatformError):
     status_code = 422
     code = "validation_error"
-
-
-class AuthError(PlatformError):
-    status_code = 401
-    code = "unauthorized"

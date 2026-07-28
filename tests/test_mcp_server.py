@@ -1,8 +1,8 @@
 """Tests for the MCP server wrapper (offline).
 
 These exercise the tool functions directly (the FastMCP ``@tool`` decorator
-returns the original coroutine) with a fake service for reads and the real
-dry-run facade for the trading path, so nothing touches the network.
+returns the original coroutine) with a fake service, so nothing touches the
+network.
 """
 
 from __future__ import annotations
@@ -10,9 +10,7 @@ from __future__ import annotations
 import pytest
 
 from polygate import mcp_server
-from polygate.config import get_settings
 from polygate.models.common import ResponseEnvelope
-from polygate.services.facade import PolymarketService
 
 
 class _FakeService:
@@ -55,9 +53,6 @@ class _FakeService:
             source="gamma",
         )
 
-    async def trades(self, **params):
-        return ResponseEnvelope.of({"echo": params, "trades": [{"id": "t1"}]}, source="clob")
-
 
 @pytest.fixture
 def fake_service():
@@ -69,13 +64,14 @@ def fake_service():
         mcp_server._service = previous
 
 
-async def test_health_tool_reports_mode():
+async def test_health_tool_reports_status_and_hosts():
     result = await mcp_server.health()
     assert result["status"] == "ok"
-    assert result["mode"] == "dry-run"  # conftest sets DRY_RUN=true
-    # health now folds in the config summary (config tool removed).
-    assert "wallet_configured" in result
-    assert "hosts" in result
+    assert result["server"] == mcp_server.mcp.name
+    assert result["hosts"]["gamma"].startswith("https://")
+    # No wallet/trading state exists to leak.
+    assert "wallet_address" not in result
+    assert "can_trade_live" not in result
 
 
 async def test_list_markets_wraps_envelope(fake_service):
@@ -108,48 +104,7 @@ async def test_series_tools_serialize(fake_service):
     assert ev["data"]["gameId"] == 90086997
 
 
-async def test_place_order_validation_error(fake_service):
-    # GTC order without a price is rejected before any upstream call.
-    result = await mcp_server.place_order(token_id="111", side="BUY", size=5)
-    assert result["error"] == "validation_error"
-
-
-async def test_place_order_validation_error_is_sanitized(fake_service):
-    # An out-of-range price must not leak pydantic's raw dump / doc URLs.
-    result = await mcp_server.place_order(
-        token_id="111", side="BUY", size=5, price=1.5
-    )
-    assert result["error"] == "validation_error"
-    detail = result["detail"]
-    assert "price" in detail
-    assert "pydantic.dev" not in detail and "For further information" not in detail
-
-
-async def test_get_trades_passes_limit_and_compact(fake_service):
-    result = await mcp_server.get_trades(limit=5)
-    assert result["source"] == "clob"
-    assert result["data"]["echo"] == {"limit": 5, "compact": True}
-
-
-async def test_place_order_dry_run_is_simulated():
-    service = PolymarketService(get_settings())
-    previous = mcp_server._service
-    mcp_server._service = service
-    try:
-        result = await mcp_server.place_order(
-            token_id="111", side="BUY", size=5, price=0.42
-        )
-        assert result["simulated"] is True
-        assert result["success"] is True
-        assert result["status"] == "SIMULATED"
-    finally:
-        await service.aclose()
-        mcp_server._service = previous
-
-
-async def test_lifespan_builds_and_closes_service(monkeypatch):
-    # Keep dry-run so onboarding is skipped and no network is touched.
-    monkeypatch.setenv("DRY_RUN", "true")
+async def test_lifespan_builds_and_closes_service():
     async with mcp_server._lifespan(mcp_server.mcp):
         assert mcp_server._service is not None
     assert mcp_server._service is None

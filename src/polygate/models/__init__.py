@@ -1,1 +1,1 @@
-"""Pydantic models for the platform's request/response surface."""
+"""Pydantic models for the response surface."""

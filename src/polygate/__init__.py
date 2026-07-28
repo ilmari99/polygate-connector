@@ -1,8 +1,8 @@
-"""Polymarket algorithmic-trading platform.
+"""Read-only Polymarket research MCP server.
 
-A language-agnostic REST gateway that exposes Polymarket market data, account
-state, and trading actions so any algorithmic trader can act on Polymarket
-programmatically.
+Exposes public Polymarket prediction-market data - events, markets, order
+books, prices, comments, holders - to MCP hosts. No account, wallet, or
+credentials; every tool is read-only.
 """
 
 from importlib.metadata import PackageNotFoundError, version

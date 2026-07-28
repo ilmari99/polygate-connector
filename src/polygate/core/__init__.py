@@ -1,1 +1,1 @@
-"""Core utilities: errors, logging, auth, and .env persistence."""
+"""Core utilities: errors and logging."""

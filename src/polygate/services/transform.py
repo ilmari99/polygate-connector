@@ -7,7 +7,7 @@ These helpers make the payloads easier for an agent to consume:
 
 * :func:`clean_market` / :func:`clean_event` decode the embedded JSON arrays so
   callers never double-parse, and - when ``compact`` is set - keep only the
-  high-signal fields a trading agent actually reasons about.
+  high-signal fields an agent actually reasons about.
 * :func:`clean_markets`, :func:`clean_events`, and :func:`clean_search` apply
   that cleanup across the shapes the three Gamma list endpoints return.
 
@@ -101,43 +101,6 @@ _COMPACT_SERIES_FIELDS = frozenset(
         "event_count",
     }
 )
-
-# High-signal fields of an authenticated CLOB trade kept in compact mode. The
-# rest is per-fill plumbing an agent never reasons about: nested ``maker_orders``,
-# the on-chain ``transaction_hash``, the ``owner``/``maker_address`` ids, and
-# ``bucket_index``/``last_update``/``taker_order_id`` bookkeeping.
-_COMPACT_TRADE_FIELDS = frozenset(
-    {
-        "id",
-        "market",
-        "asset_id",
-        "side",
-        "size",
-        "price",
-        "outcome",
-        "status",
-        "match_time",
-        "fee_rate_bps",
-        "trader_side",
-    }
-)
-
-# Low-signal fields dropped from a Data-API position in compact mode. Positions
-# are almost all signal (sizes, prices, PnL), so this is a small denylist rather
-# than an allowlist.
-_NOISE_POSITION_FIELDS = frozenset({"icon"})
-
-# Low-signal fields dropped from a Data-API activity entry in compact mode: the
-# actor is always the configured wallet, so its own profile/identity fields are
-# pure noise.
-_NOISE_ACTIVITY_FIELDS = frozenset(
-    {"icon", "name", "pseudonym", "bio", "profileImage", "profileImageOptimized"}
-)
-
-# ERC-20 "unlimited" approval sentinel (2**256 - 1). Polymarket grants this to
-# its exchange contracts, so a raw balance response carries three 78-digit
-# integers that cost tokens and say nothing beyond "approved".
-_UINT256_MAX = 2**256 - 1
 
 
 def _decode_json_fields(market: dict[str, Any]) -> dict[str, Any]:
@@ -268,65 +231,3 @@ def summarize_order_book(book: Any) -> Any:
         "spread": round(ask_p - bid_p, 6) if both else None,
     }
     return out
-
-
-def clean_trade(trade: Any, *, compact: bool = False) -> Any:
-    """Project an authenticated CLOB trade to its high-signal fields when compact."""
-    if not isinstance(trade, dict) or not compact:
-        return trade
-    return {k: v for k, v in trade.items() if k in _COMPACT_TRADE_FIELDS}
-
-
-def clean_trades(data: Any, *, compact: bool = False) -> Any:
-    """Clean a CLOB trade-history response (a JSON array of trade dicts)."""
-    if isinstance(data, list):
-        return [clean_trade(t, compact=compact) for t in data]
-    return data
-
-
-def clean_positions(data: Any, *, compact: bool = False) -> Any:
-    """Drop low-signal fields from Data-API positions (a JSON array) when compact."""
-    if not isinstance(data, list) or not compact:
-        return data
-    return [
-        {k: v for k, v in p.items() if k not in _NOISE_POSITION_FIELDS}
-        if isinstance(p, dict)
-        else p
-        for p in data
-    ]
-
-
-def clean_activity(data: Any, *, compact: bool = False) -> Any:
-    """Drop the actor's own profile/identity noise from Data-API activity when compact."""
-    if not isinstance(data, list) or not compact:
-        return data
-    return [
-        {k: v for k, v in a.items() if k not in _NOISE_ACTIVITY_FIELDS}
-        if isinstance(a, dict)
-        else a
-        for a in data
-    ]
-
-
-def clean_balance(data: Any) -> Any:
-    """Collapse a balance response's max-uint256 allowances to ``"unlimited"``.
-
-    ``get_balance`` returns the collateral ``balance`` plus per-contract ERC-20
-    ``allowances``. Polymarket grants unlimited approval, so each allowance is
-    ``2**256 - 1`` - a 78-digit integer that costs tokens and carries no signal
-    beyond "approved". We replace those with the string ``"unlimited"`` while
-    leaving any finite value untouched (a zero/finite allowance is the real
-    signal: it can block trading). Always applied - the raw value is never useful.
-    """
-    if not isinstance(data, dict):
-        return data
-    allowances = data.get("allowances")
-    if not isinstance(allowances, dict):
-        return data
-    collapsed = {}
-    for key, value in allowances.items():
-        try:
-            collapsed[key] = "unlimited" if int(value) >= _UINT256_MAX else value
-        except (TypeError, ValueError):
-            collapsed[key] = value
-    return {**data, "allowances": collapsed}

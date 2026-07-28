@@ -1,30 +1,9 @@
-"""Model Context Protocol (MCP) server exposing PolyGate to any MCP host.
+"""Model Context Protocol (MCP) server for read-only Polymarket research.
 
-This wraps the same :class:`~polygate.services.facade.PolymarketService` that
-backs the REST gateway, but speaks MCP over stdio instead of HTTP - so any
-MCP-capable AI application (Claude Desktop, IDE assistants, custom agents, ...)
-can research Polymarket and place trades with a single ``mcpServers`` entry and
-no separate server process, port, or platform API key.
-
-Configure your MCP host like::
-
-    {
-      "mcpServers": {
-        "polygate": {
-          "command": "uvx",
-          "args": ["--from", "git+https://github.com/ilmari99/polygate@v0.5.0", "polygate-mcp"],
-          "env": {
-            "FUNDER_ADDRESS": "0xYourWalletAddress...",
-            "PRIVATE_KEY": "0xYourPrivateKey..."
-          }
-        }
-      }
-    }
-
-Market-data and research tools work with no wallet. The account and trading tools
-become active once ``PRIVATE_KEY`` and ``FUNDER_ADDRESS`` are provided; the CLOB
-credentials and order signature type are derived automatically in memory at
-startup. **Orders are real money once a funded wallet is configured.**
+Wraps :class:`~polygate.services.facade.PolymarketService` and exposes public
+Polymarket data - events, markets, order books, prices, comments, holders - to
+any MCP host. No account, credentials, or wallet are involved; every tool is
+read-only.
 """
 
 from __future__ import annotations
@@ -33,17 +12,12 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from importlib.resources import files
 from typing import Any
 
-from pydantic import ValidationError as PydanticValidationError
-
 from . import __version__
-from .config import Settings, get_settings
+from .config import get_settings
 from .core import logging as core_logging
 from .core.errors import PlatformError
-from .models.order import OrderType, PlaceOrderRequest, Side
-from .onboarding import complete_onboarding
 from .services.facade import PolymarketService
 
 log = logging.getLogger("polygate.mcp")
@@ -74,26 +48,6 @@ def _configure_stderr_logging(level: str = "INFO") -> None:
     core_logging._CONFIGURED = True  # type: ignore[attr-defined]
 
 
-async def _onboard(settings: Settings) -> None:
-    """Make the wallet trade-ready in memory (derive creds, detect sig type).
-
-    Reuses the shared onboarding routine with ``persist=False``: unlike the REST
-    server nothing is written to ``.env``, because the wallet always comes from
-    the environment, so deriving fresh each start keeps credentials consistent
-    after a key swap (explicit ``CLOB_*`` / ``SIGNATURE_TYPE`` env overrides are
-    respected). A failure is non-fatal - research tools still work - so we log
-    and continue rather than crash the stdio server.
-    """
-    try:
-        await complete_onboarding(settings, persist=False)
-    except Exception as exc:  # noqa: BLE001 - never crash the MCP server on onboarding
-        log.warning(
-            "Wallet onboarding incomplete (%s); trading tools inactive until the "
-            "wallet/connectivity is fixed. Research tools still work.",
-            exc,
-        )
-
-
 def _require_service() -> PolymarketService:
     if _service is None:  # pragma: no cover - lifespan always sets it
         raise RuntimeError("PolyGate service is not initialised.")
@@ -121,15 +75,6 @@ async def _lifespan(_server: "FastMCP") -> AsyncIterator[None]:
     get_settings.cache_clear()
     settings = get_settings()
     _configure_stderr_logging(settings.log_level)
-    if settings.dry_run:
-        log.warning("DRY_RUN enabled: orders are simulated, not sent.")
-    elif not settings.has_wallet:
-        log.warning(
-            "No wallet configured; account and trading tools are inactive. Set "
-            "PRIVATE_KEY and FUNDER_ADDRESS to enable them. "
-            "Market-data and research tools work without a wallet."
-        )
-    await _onboard(settings)
     _service = PolymarketService(settings)
     log.info("PolyGate MCP server ready (version %s).", __version__)
     try:
@@ -151,31 +96,18 @@ except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
     ) from exc
 
 
-def _load_trading_guide() -> str:
-    """Read the packaged full trading briefing (``llm.md``)."""
-    return files("polygate").joinpath("llm.md").read_text(encoding="utf-8")
-
-
-# Condensed always-on briefing delivered to the host via the MCP ``instructions``
-# field (the one channel most hosts inject automatically). It covers only the
-# platform/API fundamentals; the full trading guide (strategy, memory, tool
-# catalogue) is served on demand by the ``polygate://trading-guide`` resource below.
+# Always-on briefing delivered to the host via the MCP ``instructions`` field.
+# Factual platform/API fundamentals only - no behavioural guidance.
 INSTRUCTIONS = """\
-PolyGate exposes Polymarket prediction markets to MCP hosts as tools. This covers the
-platform fundamentals; the full trading guide is served as the `polygate://trading-guide`
-resource.
-
-REAL money. Once a funded wallet is configured, `place_order` spends real funds on the
-user's account. Confirm side, size, price, and cost with the user before ordering,
-unless told to trade autonomously.
+Polymarket prediction-market data: events, markets, order books, prices, and public
+holder and comment data. Read-only.
 
 Positions. A share pays $1 if its outcome resolves true and $0 if false, so its price is
-the market's implied probability (Yes at 0.62 = 62%). You need not hold to resolution:
-sell any time at the current bid.
+the market's implied probability (Yes at 0.62 = 62%).
 
 Ids. event id -> `get_comments`; conditionId (0x...) -> `get_market`, `get_holders`;
-clobTokenId -> the book/order/trade tools. Prices and orders are ALWAYS per outcome
-token, never per market. `outcomes`, `outcomePrices`, `clobTokenIds` are index-aligned.
+clobTokenId -> the book/price tools. Prices are ALWAYS per outcome token, never per
+market. `outcomes`, `outcomePrices`, `clobTokenIds` are index-aligned.
 
 Structure. A `market` is the atomic tradable (one `conditionId`, its `clobTokenIds`). An
 `event` groups markets (a "market page"). Over events sit two parallel groupings: `tags`
@@ -187,21 +119,14 @@ and a single event show only a fragment. Navigate by deepening (`list_tags`/`lis
 market under one scope with `collect_markets(series_id=|tag_id=|event=)`; for a sports game
 use `collect_markets(event=<slug>, group_by="gameId")` to gather all its sub-markets.
 
-The `side` footgun. `get_order_book` returns a `summary` with `best_bid`, `best_ask`,
-`midpoint`, and `spread`. To buy you pay the `best_ask`; to sell you get the `best_bid`;
-use `midpoint` for fair value.
+Order books. `get_order_book` returns a `summary` with `best_bid`, `best_ask`,
+`midpoint`, and `spread`. The `best_ask` is the price a buyer pays; the `best_bid` is
+the price a seller receives; `midpoint` sits between them.
 
-Tradeable only when `active` is true and `closed` is false, `acceptingOrders` and
-`enableOrderBook` are true, and `endDate` is in the future (re-check on the object).
-
-Fees. Only takers (spread-crossing orders) pay: fee = shares * rate * p * (1 - p),
-largest near p = 0.5; makers pay nothing and some markets are fee-free. Check a market's
-`makerBaseFee`/`takerBaseFee`/`feesEnabled`.
+A market is open for trading on Polymarket when `active` is true, `closed` is false,
+`acceptingOrders` and `enableOrderBook` are true, and `endDate` is in the future.
 
 Numbers. CLOB values (price, midpoint, spread, book) are strings - coerce before math.
-`get_balance` is a raw 6-decimal integer string (divide by 1,000,000 for USDC); portfolio
-and position dollar fields are already dollars. A marketable order must be worth >= $1.00
-(`size * price`) and land on clean cents (whole shares on a 0.01-tick market).
 """
 
 
@@ -221,27 +146,18 @@ mcp._mcp_server.version = __version__
 # --------------------------------------------------------------------------- #
 @mcp.tool()
 async def health() -> dict[str, Any]:
-    """Liveness, version, run mode, and the active (secret-free) configuration.
-
-    Reports `status`/`version`/`can_trade_live` plus the full config summary
-    (mode, wallet, CLOB creds, hosts).
-    """
+    """Liveness check: server status, version, and the upstream API hosts in use."""
     settings = get_settings()
     return {
         "status": "ok",
         "version": __version__,
-        "can_trade_live": settings.can_trade_live,
-        **settings.public_summary(),
+        "server": mcp.name,
+        "hosts": {
+            "gamma": settings.gamma_host,
+            "clob": settings.clob_host,
+            "data": settings.data_host,
+        },
     }
-
-
-@mcp.resource("polygate://trading-guide", mime_type="text/markdown")
-def trading_guide() -> str:
-    """Full PolyGate trading briefing (llm.md): what a position is, the decision
-    principles (q vs p, Kelly, Bayes, fees), common footguns, the tool catalogue,
-    and memory discipline. The server `instructions` are a condensed version of this.
-    """
-    return _load_trading_guide()
 
 
 # --------------------------------------------------------------------------- #
@@ -507,144 +423,6 @@ async def get_holders(condition_id: str, limit: int = 100) -> dict[str, Any]:
     signal about how much money sits on each side.
     """
     return await _serialize(_require_service().holders(condition_id, limit=limit))
-
-
-# --------------------------------------------------------------------------- #
-# Portfolio / account (require a configured wallet)
-# --------------------------------------------------------------------------- #
-@mcp.tool()
-async def get_positions(limit: int = 100, compact: bool = True) -> dict[str, Any]:
-    """Open positions for the configured wallet. Requires a wallet.
-
-    Eventually consistent: right after a fill it may lag, so re-poll rather than
-    trust an empty result. Compact by default (drops the `icon` url); pass
-    `compact=False` for every field.
-    """
-    return await _serialize(_require_service().positions(limit=limit, compact=compact))
-
-
-@mcp.tool()
-async def get_portfolio_value() -> dict[str, Any]:
-    """Current portfolio value (USD) for the configured wallet. Requires a wallet."""
-    return await _serialize(_require_service().portfolio_value())
-
-
-@mcp.tool()
-async def get_balance(token_id: str | None = None) -> dict[str, Any]:
-    """Collateral (USDC) balance, or a conditional-token balance when `token_id` is set.
-
-    USDC balances are raw 6-decimal integer strings: divide by 1,000,000 for
-    dollars. The per-contract `allowances` are collapsed to `"unlimited"` where
-    Polymarket has granted the max approval (a finite value would mean trading is
-    capped/blocked). Requires a configured wallet and CLOB credentials.
-    """
-    return await _serialize(_require_service().balance(token_id=token_id))
-
-
-@mcp.tool()
-async def get_activity(limit: int = 100, compact: bool = True) -> dict[str, Any]:
-    """Account activity feed for the configured wallet. Requires a wallet.
-
-    Compact by default (drops the wallet's own profile/identity noise - `icon`,
-    `name`, `pseudonym`, `bio`, `profileImage*`); pass `compact=False` for every
-    field.
-    """
-    return await _serialize(_require_service().activity(limit=limit, compact=compact))
-
-
-@mcp.tool()
-async def get_open_orders(
-    market: str | None = None, asset_id: str | None = None
-) -> dict[str, Any]:
-    """Open orders for the configured wallet.
-
-    The CLOB may return nothing for a fully unfiltered query, so pass a `market`
-    (condition id) or `asset_id` (token id) to list reliably.
-    """
-    return await _serialize(
-        _require_service().open_orders(market=market, asset_id=asset_id)
-    )
-
-
-@mcp.tool()
-async def get_trades(limit: int = 100, compact: bool = True) -> dict[str, Any]:
-    """Trade history for the configured wallet, newest-first. Requires a wallet.
-
-    Bounded to `limit` trades. Compact by default (projects each fill to its
-    high-signal fields - id, market, asset_id, side, size, price, outcome,
-    status, match_time, fee_rate_bps, trader_side - dropping nested maker_orders,
-    hashes and owner ids); pass `compact=False` for the full fills.
-    """
-    return await _serialize(_require_service().trades(limit=limit, compact=compact))
-
-
-# --------------------------------------------------------------------------- #
-# Trading (REAL money once a funded wallet is configured)
-# --------------------------------------------------------------------------- #
-@mcp.tool()
-async def place_order(
-    token_id: str,
-    side: str,
-    size: float,
-    price: float | None = None,
-    order_type: str = "GTC",
-    expiration: int | None = None,
-    tick_size: str | None = None,
-    neg_risk: bool | None = None,
-) -> dict[str, Any]:
-    """Place an order on Polymarket. REAL money once a funded wallet is configured.
-
-    Args:
-        token_id: CLOB token id of the outcome (Yes or No), from `clobTokenIds`.
-        side: 'BUY' or 'SELL'.
-        size: Number of outcome shares (> 0).
-        price: Limit price in (0, 1). Required for GTC/GTD, and for FOK/FAK.
-        order_type: 'GTC' (default, resting limit), 'GTD' (needs `expiration`),
-            'FOK' (fill-or-kill), 'FAK' (fill-and-kill).
-        expiration: Unix seconds; required for GTD orders.
-        tick_size: Market tick size, e.g. '0.01'. Auto-detected if omitted.
-        neg_risk: Whether this is a neg-risk market. Auto-detected if omitted.
-
-    For an instant taker fill, cross the book: to buy set price >= best ask, to
-    sell set price <= best bid - takers pay a fee, makers don't. A marketable
-    order must be worth >= $1.00 (`size * price`) and land on clean cents (on a
-    0.01-tick market use whole-share counts). The result carries `order_id` and
-    `status` ('live' or 'matched').
-    """
-    try:
-        req = PlaceOrderRequest(
-            token_id=token_id,
-            side=Side(side.upper()),
-            size=size,
-            price=price,
-            order_type=OrderType(order_type.upper()),
-            expiration=expiration,
-            tick_size=tick_size,
-            neg_risk=neg_risk,
-        )
-    except PydanticValidationError as exc:
-        # Summarize to "field: reason" pairs so the model gets an actionable
-        # message instead of pydantic's multi-line dump with doc URLs.
-        detail = "; ".join(
-            f"{'.'.join(str(p) for p in e['loc']) or 'input'}: {e['msg']}"
-            for e in exc.errors()
-        )
-        return {"error": "validation_error", "detail": detail}
-    except ValueError as exc:
-        return {"error": "validation_error", "detail": str(exc)}
-    return await _serialize(_require_service().place_order(req))
-
-
-@mcp.tool()
-async def cancel_order(order_id: str) -> dict[str, Any]:
-    """Cancel a single open order by its order id."""
-    return await _serialize(_require_service().cancel_order(order_id))
-
-
-@mcp.tool()
-async def cancel_all_orders() -> dict[str, Any]:
-    """Cancel all open orders for the configured wallet."""
-    return await _serialize(_require_service().cancel_all())
 
 
 def run() -> None:

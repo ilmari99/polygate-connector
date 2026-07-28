@@ -30,18 +30,6 @@ def _service(monkeypatch, read_return):
     return svc
 
 
-class _FakeTrading:
-    def __init__(self, *, trades=None, balance=None):
-        self._trades = trades or []
-        self._balance = balance or {}
-
-    async def trades(self):
-        return self._trades
-
-    async def balance_allowance(self, *, conditional_token_id=None):
-        return self._balance
-
-
 def test_flatten_search_adds_event_context():
     data = {
         "events": [
@@ -156,68 +144,4 @@ async def test_search_flatten_true_adds_tagged_markets(monkeypatch):
     env = await svc.search("q", flatten=True)
     assert env.data["markets"][0]["event_id"] == "7"
     assert env.data["markets"][0]["clobTokenIds"] == ["1"]
-    await svc.aclose()
-
-
-# --- trades: bounded + compact (Category 3) ---
-
-
-def _big_trade(i: int) -> dict:
-    return {
-        "id": f"t{i}", "market": "0xc", "asset_id": "1", "side": "BUY", "size": 1,
-        "price": 0.5, "outcome": "Yes", "status": "OK", "match_time": "1",
-        "fee_rate_bps": "0", "trader_side": "TAKER",
-        "maker_orders": [{"order_id": "o"}], "transaction_hash": "0xh",
-        "owner": "u", "bucket_index": 1, "last_update": "2",
-    }
-
-
-async def test_trades_limits_and_compacts(monkeypatch):
-    svc = PolymarketService(get_settings())
-    svc._trading = _FakeTrading(trades=[_big_trade(i) for i in range(5)])
-    env = await svc.trades(limit=2)
-    assert len(env.data) == 2  # bounded
-    assert "maker_orders" not in env.data[0]  # compacted
-    assert env.data[0]["price"] == 0.5
-    await svc.aclose()
-
-
-async def test_trades_full_when_compact_false(monkeypatch):
-    svc = PolymarketService(get_settings())
-    svc._trading = _FakeTrading(trades=[_big_trade(0)])
-    env = await svc.trades(compact=False)
-    assert "maker_orders" in env.data[0]
-    await svc.aclose()
-
-
-# --- balance allowance collapsing (issue #9) ---
-
-
-async def test_balance_collapses_max_uint_allowances(monkeypatch):
-    svc = PolymarketService(get_settings())
-    svc._trading = _FakeTrading(balance={
-        "balance": "100", "allowances": {"0xA": str(2**256 - 1), "0xB": "0"}
-    })
-    env = await svc.balance()
-    assert env.data["allowances"]["0xA"] == "unlimited"
-    assert env.data["allowances"]["0xB"] == "0"
-    await svc.aclose()
-
-
-# --- positions / activity compact (Category 3) ---
-
-
-async def test_positions_compact_drops_icon(monkeypatch):
-    svc = _service(monkeypatch, [{"conditionId": "0x1", "cashPnl": -1.0, "icon": "u"}])
-    env = await svc.positions()
-    assert "icon" not in env.data[0]
-    assert env.data[0]["cashPnl"] == -1.0
-    await svc.aclose()
-
-
-async def test_activity_compact_drops_identity(monkeypatch):
-    svc = _service(monkeypatch, [{"type": "TRADE", "price": 0.5, "name": "me", "bio": ""}])
-    env = await svc.activity()
-    assert "name" not in env.data[0] and "bio" not in env.data[0]
-    assert env.data[0]["price"] == 0.5
     await svc.aclose()

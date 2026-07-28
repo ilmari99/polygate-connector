@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 from polygate.services.transform import (
-    clean_activity,
-    clean_balance,
     clean_event,
     clean_events,
     clean_market,
     clean_markets,
-    clean_positions,
     clean_search,
     clean_series,
     clean_series_list,
-    clean_trade,
-    clean_trades,
 )
 
 
@@ -135,90 +130,3 @@ def test_clean_series_compact_projects_allowlist():
     assert out["event_count"] == 1
     assert out["recurrence"] == "monthly"
     assert "description" not in out
-
-
-# --- Account tools: trades, positions, activity, balance ---
-
-
-def _raw_trade() -> dict:
-    return {
-        "id": "t1",
-        "market": "0xcond",
-        "asset_id": "111",
-        "side": "BUY",
-        "size": 20,
-        "price": 0.51,
-        "outcome": "Yes",
-        "status": "CONFIRMED",
-        "match_time": "1783286926",
-        "fee_rate_bps": "0",
-        "trader_side": "TAKER",
-        # noise:
-        "maker_orders": [{"order_id": "o1", "matched_amount": "20"}],
-        "transaction_hash": "0xhash",
-        "owner": "uuid-owner",
-        "maker_address": "0xmaker",
-        "taker_order_id": "0xtaker",
-        "bucket_index": 3,
-        "last_update": "1783286927",
-    }
-
-
-def test_clean_trade_compact_keeps_signal_drops_plumbing():
-    out = clean_trade(_raw_trade(), compact=True)
-    assert out["id"] == "t1"
-    assert out["price"] == 0.51
-    assert out["trader_side"] == "TAKER"
-    for noise in ("maker_orders", "transaction_hash", "owner", "maker_address",
-                  "taker_order_id", "bucket_index", "last_update"):
-        assert noise not in out
-
-
-def test_clean_trade_non_compact_is_untouched():
-    raw = _raw_trade()
-    assert clean_trade(raw, compact=False) == raw
-    assert clean_trades([raw]) == [raw]  # default compact=False
-
-
-def test_clean_trades_compacts_each():
-    out = clean_trades([_raw_trade(), _raw_trade()], compact=True)
-    assert len(out) == 2
-    assert all("maker_orders" not in t for t in out)
-
-
-def test_clean_positions_drops_icon_only_when_compact():
-    raw = [{"conditionId": "0x1", "size": 2500, "cashPnl": -26.25,
-            "icon": "https://x/i.png"}]
-    assert clean_positions(raw, compact=False) == raw
-    out = clean_positions(raw, compact=True)
-    assert "icon" not in out[0]
-    assert out[0]["cashPnl"] == -26.25  # signal preserved
-
-
-def test_clean_activity_drops_identity_noise_when_compact():
-    raw = [{
-        "conditionId": "0x1", "type": "TRADE", "size": 20, "price": 0.51,
-        "icon": "https://x/i.png", "name": "ilmari99", "pseudonym": "Sneaky-Citrus",
-        "bio": "", "profileImage": "", "profileImageOptimized": "",
-    }]
-    assert clean_activity(raw, compact=False) == raw
-    out = clean_activity(raw, compact=True)
-    for noise in ("icon", "name", "pseudonym", "bio", "profileImage", "profileImageOptimized"):
-        assert noise not in out[0]
-    assert out[0]["price"] == 0.51  # signal preserved
-
-
-def test_clean_balance_collapses_max_uint_allowances():
-    max_uint = str(2**256 - 1)
-    data = {"balance": "1875491510",
-            "allowances": {"0xA": max_uint, "0xB": "0", "0xC": "12345"}}
-    out = clean_balance(data)
-    assert out["balance"] == "1875491510"  # untouched
-    assert out["allowances"]["0xA"] == "unlimited"
-    assert out["allowances"]["0xB"] == "0"       # finite value kept (real signal)
-    assert out["allowances"]["0xC"] == "12345"
-
-
-def test_clean_balance_passthrough_without_allowances():
-    assert clean_balance({"balance": "10"}) == {"balance": "10"}
-    assert clean_balance("nope") == "nope"

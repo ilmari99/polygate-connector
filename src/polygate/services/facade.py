@@ -1,9 +1,8 @@
-"""The central service facade used by the API routes.
+"""The central service facade behind every MCP tool.
 
-It owns the upstream clients and enforces the dry-run safety switch: in dry-run
-mode every state-changing action (place/cancel order) is simulated and
-audit-logged but never signed or broadcast. Read operations always execute for
-real because they are free and side-effect-free.
+It owns the upstream HTTP client and aggregates the public Polymarket read
+APIs (Gamma, CLOB, Data) behind one interface. Every operation is a
+side-effect-free read of public data.
 """
 
 from __future__ import annotations
@@ -17,29 +16,22 @@ from ..constants import (
     GAMMA_PAGE_LIMIT,
     MARKET_SCAN_MAX_EVENTS,
 )
-from ..core.errors import ConfigurationError, NotFoundError, UpstreamError, ValidationError
-from ..core.logging import audit
+from ..core.errors import NotFoundError, UpstreamError, ValidationError
 from ..models.common import ResponseEnvelope
-from ..models.order import CancelResult, OrderResult, PlaceOrderRequest
 from .http import HttpClient
-from .trading import TradingService
 from .transform import (
-    clean_activity,
-    clean_balance,
     clean_event,
     clean_events,
     clean_market,
     clean_markets,
-    clean_positions,
     clean_search,
     clean_series_list,
-    clean_trades,
     summarize_order_book,
 )
 
 
 class PolymarketService:
-    """Aggregates all upstream access behind one dry-run-aware interface."""
+    """Aggregates all upstream read access behind one interface."""
 
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -49,27 +41,9 @@ class PolymarketService:
         self._gamma_host = settings.gamma_host.rstrip("/")
         self._clob_host = settings.clob_host.rstrip("/")
         self._data_host = settings.data_host.rstrip("/")
-        self._trading: TradingService | None = None
 
     async def aclose(self) -> None:
         await self._http.aclose()
-
-    @property
-    def dry_run(self) -> bool:
-        return self._settings.dry_run
-
-    def trading(self) -> TradingService:
-        """Lazily build the authenticated CLOB client."""
-        if self._trading is None:
-            self._trading = TradingService.from_settings(self._settings)
-        return self._trading
-
-    def require_funder(self) -> str:
-        if not self._settings.funder_address:
-            raise ConfigurationError(
-                "FUNDER_ADDRESS not configured; cannot query account data."
-            )
-        return self._settings.funder_address
 
     async def _read(
         self, host: str, path: str, source: str, params: dict[str, Any] | None = None
@@ -466,104 +440,6 @@ class PolymarketService:
         )
         return ResponseEnvelope.of(data, source="data")
 
-    # --- Portfolio / account (require a configured wallet) ---
-    async def positions(self, *, limit: int = 100, compact: bool = True) -> ResponseEnvelope:
-        data = await self._read(
-            self._data_host, "/positions", "data", {"user": self.require_funder(), "limit": limit}
-        )
-        return ResponseEnvelope.of(clean_positions(data, compact=compact), source="data")
-
-    async def portfolio_value(self) -> ResponseEnvelope:
-        data = await self._read(
-            self._data_host, "/value", "data", {"user": self.require_funder()}
-        )
-        return ResponseEnvelope.of(data, source="data")
-
-    async def balance(self, *, token_id: str | None = None) -> ResponseEnvelope:
-        data = await self.trading().balance_allowance(conditional_token_id=token_id)
-        return ResponseEnvelope.of(clean_balance(data), source="clob")
-
-    async def activity(self, *, limit: int = 100, compact: bool = True) -> ResponseEnvelope:
-        data = await self._read(
-            self._data_host, "/activity", "data", {"user": self.require_funder(), "limit": limit}
-        )
-        return ResponseEnvelope.of(clean_activity(data, compact=compact), source="data")
-
-    async def open_orders(
-        self, *, market: str | None = None, asset_id: str | None = None
-    ) -> ResponseEnvelope:
-        data = await self.trading().open_orders(market=market, asset_id=asset_id)
-        return ResponseEnvelope.of(data, source="clob")
-
-    async def trades(self, *, limit: int = 100, compact: bool = True) -> ResponseEnvelope:
-        """Authenticated CLOB trade history, newest-first, bounded and cleaned.
-
-        The upstream returns the full history with per-fill plumbing (nested
-        ``maker_orders``, hashes, owner ids) that can run to tens of thousands of
-        tokens. We cap it to ``limit`` and, in compact mode, project each trade to
-        its high-signal fields so a routine "how did my trades go?" can't blow up
-        the caller's context.
-        """
-        data = await self.trading().trades()
-        if isinstance(data, list):
-            data = data[:limit]
-        return ResponseEnvelope.of(clean_trades(data, compact=compact), source="clob")
-
-    # --- Actions (dry-run aware) ---
-    async def place_order(self, req: PlaceOrderRequest) -> OrderResult:
-        fields = {
-            "token_id": req.token_id,
-            "side": req.side.value,
-            "size": req.size,
-            "price": req.price,
-            "order_type": req.order_type.value,
-        }
-        if self.dry_run:
-            audit("place_order", dry_run=True, **fields)
-            return OrderResult(
-                simulated=True,
-                success=True,
-                status="SIMULATED",
-                request=fields,
-            )
-        raw = await self.trading().place_order(req)
-        audit("place_order", dry_run=False, **fields, response=raw)
-        return OrderResult(
-            simulated=False,
-            success=bool(raw.get("success", True)),
-            order_id=raw.get("orderID"),
-            status=raw.get("status"),
-            request=fields,
-            raw=raw,
-        )
-
-    async def cancel_order(self, order_id: str) -> CancelResult:
-        if self.dry_run:
-            audit("cancel_order", dry_run=True, order_id=order_id)
-            return CancelResult(simulated=True, success=True, canceled=[order_id])
-        raw = await self.trading().cancel_order(order_id)
-        audit("cancel_order", dry_run=False, order_id=order_id, response=raw)
-        return CancelResult(
-            simulated=False,
-            success=True,
-            canceled=raw.get("canceled") or [order_id],
-            not_canceled=raw.get("not_canceled"),
-            raw=raw,
-        )
-
-    async def cancel_all(self) -> CancelResult:
-        if self.dry_run:
-            audit("cancel_all", dry_run=True)
-            return CancelResult(simulated=True, success=True, canceled=[])
-        raw = await self.trading().cancel_all()
-        audit("cancel_all", dry_run=False, response=raw)
-        return CancelResult(
-            simulated=False,
-            success=True,
-            canceled=raw.get("canceled") or [],
-            not_canceled=raw.get("not_canceled"),
-            raw=raw,
-        )
 
 
 def _flatten_search(data: Any) -> Any:
