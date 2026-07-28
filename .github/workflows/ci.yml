@@ -23,3 +23,10 @@ jobs:
           ! git grep -nE 'place_order|cancel_order|PRIVATE_KEY|FUNDER_ADDRESS|DRY_RUN|py_clob_client|eth_account' -- src/
       - name: Test
         run: pytest
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t polygate-connector .
