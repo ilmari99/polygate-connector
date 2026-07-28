@@ -43,5 +43,5 @@ Changes to this policy are published at this URL with an updated date.
 
 ## Contact
 
-- GitHub Issues: <https://github.com/ilmari99/polygate-claude-connector/issues>
+- GitHub Issues: <https://github.com/ilmari99/polygate-connector/issues>
 - Email: <i.vahteristo@gmail.com>

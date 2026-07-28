@@ -66,7 +66,7 @@ field glossary.
   "mcpServers": {
     "polymarket-research": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/ilmari99/polygate-claude-connector", "polygate-connector-stdio"]
+      "args": ["--from", "git+https://github.com/ilmari99/polygate-connector", "polygate-connector-stdio"]
     }
   }
 }
@@ -136,7 +136,7 @@ Polymarket's public APIs. Full policy: [docs/privacy-policy.md](docs/privacy-pol
 
 ## Support
 
-Open an issue: <https://github.com/ilmari99/polygate-claude-connector/issues>.
+Open an issue: <https://github.com/ilmari99/polygate-connector/issues>.
 Reviewer/test instructions live in [docs/reviewer-guide.md](docs/reviewer-guide.md).
 
 ## Development
