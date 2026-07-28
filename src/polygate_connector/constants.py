@@ -41,3 +41,19 @@ MAX_LIST_LIMIT = 100
 # Hard ceiling on a single serialized tool result. Anything larger is reduced
 # (rows dropped, with an explicit notice) before it reaches the client.
 RESPONSE_MAX_BYTES = 100_000
+
+# --- Upstream response cache (seconds per API path) ---
+# Catalog listings move slowly; live CLOB data moves fast; search results and
+# social data sit in between. A path missing here is never cached.
+CACHE_TTLS = {
+    "/markets": 45.0,
+    "/events": 45.0,
+    "/series": 45.0,
+    "/tags": 45.0,
+    "/public-search": 300.0,
+    "/book": 15.0,
+    "/last-trade-price": 15.0,
+    "/prices-history": 15.0,
+    "/comments": 120.0,
+    "/holders": 120.0,
+}

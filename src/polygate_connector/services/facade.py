@@ -23,6 +23,7 @@ from ..constants import (
 )
 from ..core.errors import NotFoundError, UpstreamError, ValidationError
 from ..models.common import ListPage, ResponseEnvelope
+from .cache import TTLCache, ttl_for
 from .http import HttpClient
 from .transform import (
     Verbosity,
@@ -70,8 +71,11 @@ class PolymarketService:
     def __init__(self, settings: Settings):
         self._settings = settings
         self._http = HttpClient(
-            timeout=settings.http_timeout_seconds, max_retries=settings.http_max_retries
+            timeout=settings.http_timeout_seconds,
+            max_retries=settings.http_max_retries,
+            concurrency=settings.upstream_concurrency,
         )
+        self._cache = TTLCache()
         self._gamma_host = settings.gamma_host.rstrip("/")
         self._clob_host = settings.clob_host.rstrip("/")
         self._data_host = settings.data_host.rstrip("/")
@@ -82,9 +86,22 @@ class PolymarketService:
     async def _read(
         self, host: str, path: str, source: str, params: dict[str, Any] | None = None
     ) -> Any:
-        """GET ``host + path`` (dropping None params) and tag the upstream ``source``."""
+        """GET ``host + path`` (dropping None params) and tag the upstream ``source``.
+
+        Successful responses are cached per (url, params) for the path's TTL;
+        errors always propagate uncached.
+        """
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        return await self._http.get_json(f"{host}{path}", params=clean, source=source)
+        ttl = ttl_for(path)
+        key = (host + path, tuple(sorted((k, str(v)) for k, v in clean.items())))
+        if ttl > 0:
+            cached = self._cache.get(key)
+            if not TTLCache.is_miss(cached):
+                return cached
+        data = await self._http.get_json(f"{host}{path}", params=clean, source=source)
+        if ttl > 0:
+            self._cache.set(key, data, ttl)
+        return data
 
     async def _read_paged(
         self,

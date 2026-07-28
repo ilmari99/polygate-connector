@@ -35,6 +35,22 @@ class Settings(BaseSettings):
     # --- Outbound HTTP behaviour ---
     http_timeout_seconds: float = Field(default=15.0)
     http_max_retries: int = Field(default=3)
+    # Max upstream requests in flight at once (shared across all callers).
+    upstream_concurrency: int = Field(default=8)
+
+    # --- HTTP serving (serve.py) ---
+    # The public hostname the connector is reached at (e.g. mcp.example.com);
+    # Host/Origin validation is pinned to it. Required to serve over HTTP.
+    public_host: str | None = Field(default=None)
+    # Bind address for uvicorn. Loopback by default: only the tunnel (or a
+    # container port mapping) should reach the process directly.
+    bind_host: str = Field(default="127.0.0.1")
+    bind_port: int = Field(default=8765)
+    # slowapi rate-limit expressions. Stateless MCP is chatty (initialize +
+    # list_tools + every call is a POST), so the per-IP limit leaves headroom
+    # for one busy Claude session.
+    rate_limit_per_ip: str = Field(default="60/minute")
+    rate_limit_global: str = Field(default="600/minute")
 
 
 @lru_cache

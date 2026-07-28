@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -23,13 +24,16 @@ _RETRYABLE = (httpx.TransportError, httpx.HTTPStatusError)
 class HttpClient:
     """Thin wrapper around :class:`httpx.AsyncClient` with retry + error mapping."""
 
-    def __init__(self, *, timeout: float = 15.0, max_retries: int = 3):
+    def __init__(self, *, timeout: float = 15.0, max_retries: int = 3, concurrency: int = 8):
         self._client = httpx.AsyncClient(
             timeout=timeout,
             headers={"User-Agent": f"polygate-connector/{__version__}"},
             follow_redirects=True,
         )
         self._max_retries = max(1, max_retries)
+        # A traffic spike must not turn this server into a load test against
+        # Polymarket: at most this many upstream requests are in flight at once.
+        self._semaphore = asyncio.Semaphore(max(1, concurrency))
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -46,7 +50,10 @@ class HttpClient:
             retry=retry_if_exception_type(_RETRYABLE),
         )
         async def _do() -> Any:
-            resp = await self._client.get(url, params=params)
+            # Acquired per attempt, not across retries, so a backoff wait
+            # never holds a concurrency slot.
+            async with self._semaphore:
+                resp = await self._client.get(url, params=params)
             # Only retry on server errors; 4xx are surfaced immediately below.
             if resp.status_code >= 500:
                 resp.raise_for_status()
