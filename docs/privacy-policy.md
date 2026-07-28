@@ -13,9 +13,10 @@ recorded by us.
 
 ## Operational logs
 
-For reliability monitoring we keep logs containing only: the tool name
-invoked, the response time, and the outcome status. Logs never contain query
-arguments, results, or personal data. Client IP addresses are used
+For reliability and usage monitoring we keep logs containing only: the tool
+name invoked, the response time, the outcome status, the response size, and
+the number of rows returned. Logs never contain query arguments, results, or
+personal data. Client IP addresses are used
 transiently in memory for rate limiting and are not written to logs. Logs
 are retained for up to 7 days and then deleted.
 

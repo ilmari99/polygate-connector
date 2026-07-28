@@ -1,0 +1,23 @@
+# systemd unit for the containerized connector. Install:
+#   sudo cp deploy/polygate-connector.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now polygate-connector
+# (Alternatively skip systemd and run docker with --restart=unless-stopped.)
+[Unit]
+Description=Polymarket Research MCP connector
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Environment=PUBLIC_HOST=mcp.example.com
+ExecStartPre=-/usr/bin/docker rm -f polygate-connector
+ExecStart=/usr/bin/docker run --name polygate-connector --rm \
+  --read-only --tmpfs /tmp --cap-drop=ALL --security-opt=no-new-privileges \
+  -p 127.0.0.1:8765:8765 -e PUBLIC_HOST=${PUBLIC_HOST} \
+  --log-driver=json-file --log-opt=max-size=20m --log-opt=max-file=3 \
+  polygate-connector
+ExecStop=/usr/bin/docker stop polygate-connector
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

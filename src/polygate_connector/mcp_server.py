@@ -28,6 +28,7 @@ from .render import (
     Column,
     enforce_size_cap,
     markdown_table,
+    payload_bytes,
 )
 from .services.facade import PolymarketService
 
@@ -75,8 +76,9 @@ async def _run_tool(
     A :class:`PlatformError` surfaces as its stable ``code`` with an actionable
     ``detail``; any other exception becomes ``internal_error`` - the traceback
     is logged server-side and never sent to the client. One log line per call
-    records the tool name, duration, and status; arguments and results are
-    never logged.
+    records tool name, duration, status, response size, and row count - the
+    usage-pattern signal - and never arguments or result contents, matching
+    the privacy policy.
 
     When ``table`` is given and the result carries list ``rows``, they are
     rendered as a markdown table (same information, roughly half the tokens of
@@ -84,6 +86,8 @@ async def _run_tool(
     """
     started = time.perf_counter()
     status = "ok"
+    result_bytes: int | None = None
+    rows_returned: Any = None
     try:
         # Serialization, table rendering, and the size cap stay inside the
         # try: a failure in any of them must surface as a typed error too,
@@ -93,7 +97,10 @@ async def _run_tool(
             result = result.model_dump(mode="json", exclude_none=True)
         if table is not None and isinstance(result.get("rows"), list):
             result["rows"] = markdown_table(result["rows"], table)
-        return enforce_size_cap(result)
+        final = enforce_size_cap(result)
+        result_bytes = payload_bytes(final)
+        rows_returned = final.get("returned")
+        return final
     except PlatformError as exc:
         status = exc.code
         return {"error": exc.code, "detail": exc.message}
@@ -107,10 +114,12 @@ async def _run_tool(
         }
     finally:
         log.info(
-            "tool=%s duration_ms=%.0f status=%s",
+            "tool=%s duration_ms=%.0f status=%s bytes=%s returned=%s",
             name,
             (time.perf_counter() - started) * 1000,
             status,
+            "-" if result_bytes is None else result_bytes,
+            "-" if rows_returned is None else rows_returned,
         )
 
 

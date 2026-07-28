@@ -1,0 +1,12 @@
+# ~/.cloudflared/config.yml - Cloudflare NAMED tunnel (stable hostname).
+# Fill in <TUNNEL-UUID> (printed by `cloudflared tunnel create`) and your
+# hostname, then install as a service: `sudo cloudflared service install`.
+tunnel: polygate-mcp
+credentials-file: /home/YOUR_USER/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: mcp.example.com
+    service: http://127.0.0.1:8765
+    originRequest:
+      connectTimeout: 30s
+  - service: http_status:404
