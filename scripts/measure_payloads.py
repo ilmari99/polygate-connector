@@ -1,13 +1,15 @@
 """Measure default-argument payload sizes for every read-only tool.
 
-Calls each facade operation against the live Polymarket APIs with default
-arguments and prints a table of serialized bytes and approximate tokens
-(bytes / 4). Ids needed by detail tools (conditionId, event slug, token id)
-are discovered from the list responses, so the script is self-contained.
+Calls each MCP tool function against the live Polymarket APIs with default
+arguments - so the measured size is the true on-the-wire result, including
+markdown-table rendering and the response cap - and prints a table of
+serialized bytes and approximate tokens (bytes / 4). Ids needed by detail
+tools (conditionId, event slug, token id) are discovered with unmeasured
+facade calls first, so the script is self-contained.
 
-With ``--save-fixtures DIR`` every raw upstream response is also snapshotted
-per tool as ``DIR/<tool>.json`` (a list of ``{url, params, response}`` records
-in call order) for use as offline respx fixtures.
+With ``--save-fixtures DIR`` every raw upstream response made by a measured
+tool call is snapshotted as ``DIR/<tool>.json`` (a list of ``{url, params,
+response}`` records in call order) for use as offline respx fixtures.
 
 Usage:
     python scripts/measure_payloads.py [--save-fixtures tests/fixtures]
@@ -22,6 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from polygate_connector import mcp_server
 from polygate_connector.config import get_settings
 from polygate_connector.services.facade import PolymarketService
 
@@ -62,73 +65,68 @@ async def main() -> int:
 
     service = PolymarketService(get_settings())
     recorder = Recorder(service)
+    mcp_server._service = service
     rows: list[tuple[str, int | str]] = []
 
-    async def run(tool: str, coro_factory) -> Any:
+    async def run(tool: str, coro_factory) -> None:
         recorder.current_tool = tool
         try:
-            envelope = await coro_factory()
+            result = await coro_factory()
+            rows.append((tool, _size(result)))
         except Exception as exc:  # noqa: BLE001 - live APIs; report and move on
             rows.append((tool, f"ERROR: {type(exc).__name__}: {exc}"))
-            return None
         finally:
             recorder.current_tool = None
-        payload = envelope.model_dump(mode="json") if hasattr(envelope, "model_dump") else envelope
-        rows.append((tool, _size(payload)))
-        return payload
 
     try:
-        markets = await run("list_markets", lambda: service.list_markets())
-        events = await run("list_events", lambda: service.list_events())
-        await run("search", lambda: service.search("election"))
-        await run("list_series", lambda: service.list_series())
-        await run("list_tags", lambda: service.list_tags())
+        # Discovery (unmeasured, unrecorded): find real ids to feed the tools.
+        condition_id = event_slug = event_id = token_id = None
+        try:
+            markets = await service.list_markets(limit=10, verbosity="compact")
+            for market in markets.rows if isinstance(markets.rows, list) else []:
+                tokens = market.get("clobTokenIds")
+                if market.get("conditionId") and isinstance(tokens, list) and tokens:
+                    condition_id, token_id = market["conditionId"], tokens[0]
+                    break
+            events = await service.list_events(limit=10, verbosity="compact")
+            for event in events.rows if isinstance(events.rows, list) else []:
+                if event.get("slug") and event.get("id"):
+                    event_slug, event_id = event["slug"], event["id"]
+                    break
+        except Exception as exc:  # noqa: BLE001
+            print(f"discovery failed: {exc}", file=sys.stderr)
 
-        def _rows(payload: Any) -> list:
-            data = (payload or {}).get("rows") or (payload or {}).get("data") or []
-            return data if isinstance(data, list) else []
+        await run("health", lambda: mcp_server.health())
+        await run("list_markets", lambda: mcp_server.list_markets())
+        await run("list_events", lambda: mcp_server.list_events())
+        await run("search", lambda: mcp_server.search("election"))
+        await run("list_series", lambda: mcp_server.list_series())
+        await run("list_tags", lambda: mcp_server.list_tags())
 
-        condition_id = next(
-            (m["conditionId"] for m in _rows(markets) if m.get("conditionId")), None
-        )
-        event_slug, event_id = None, None
-        for event in _rows(events):
-            if event.get("slug") and event.get("id"):
-                event_slug, event_id = event["slug"], event["id"]
-                break
-
-        token_id = None
         if condition_id:
-            market = await run("get_market", lambda: service.get_market(condition_id))
-            tokens = ((market or {}).get("data") or {}).get("clobTokenIds")
-            token_id = tokens[0] if isinstance(tokens, list) and tokens else None
-            await run("get_holders", lambda: service.holders(condition_id))
+            await run("get_market", lambda: mcp_server.get_market(condition_id))
+            await run("get_holders", lambda: mcp_server.get_holders(condition_id))
         else:
             rows.append(("get_market", "SKIPPED: no conditionId discovered"))
             rows.append(("get_holders", "SKIPPED: no conditionId discovered"))
         if event_slug:
-            await run("get_event", lambda: service.get_event(event_slug))
-            await run("collect_markets", lambda: service.collect_markets(event=event_slug))
-            await run("get_comments", lambda: service.comments(int(event_id)))
+            await run("get_event", lambda: mcp_server.get_event(event_slug))
+            await run("collect_markets", lambda: mcp_server.collect_markets(event=event_slug))
+            await run("get_comments", lambda: mcp_server.get_comments(int(event_id)))
         else:
             rows.append(("get_event", "SKIPPED: no event slug discovered"))
             rows.append(("collect_markets", "SKIPPED: no event slug discovered"))
             rows.append(("get_comments", "SKIPPED: no event id discovered"))
         if token_id:
-            await run("get_order_book", lambda: service.order_book(token_id))
-            await run("get_last_trade_price", lambda: service.last_trade_price(token_id))
-            await run("get_prices_history", lambda: service.prices_history(token_id))
+            await run("get_order_book", lambda: mcp_server.get_order_book(token_id))
+            await run("get_last_trade_price", lambda: mcp_server.get_last_trade_price(token_id))
+            await run("get_prices_history", lambda: mcp_server.get_prices_history(token_id))
         else:
             rows.append(("get_order_book", "SKIPPED: no token id discovered"))
             rows.append(("get_last_trade_price", "SKIPPED: no token id discovered"))
             rows.append(("get_prices_history", "SKIPPED: no token id discovered"))
-
-        from polygate_connector import mcp_server
-
-        recorder.current_tool = "health"
-        rows.append(("health", _size(await mcp_server.health())))
-        recorder.current_tool = None
     finally:
+        mcp_server._service = None
         await service.aclose()
 
     name_w = max(len(name) for name, _ in rows)
