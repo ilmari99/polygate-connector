@@ -22,3 +22,6 @@ dist/
 .DS_Store
 *.swp
 .idea/
+
+# Internal planning notes - never publish
+refactor-as-claude-connector.md
