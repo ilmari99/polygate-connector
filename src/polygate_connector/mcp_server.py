@@ -13,6 +13,7 @@ import sys
 import time
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
+from importlib.resources import files
 from typing import Any, Literal
 
 from . import __version__
@@ -148,19 +149,24 @@ holder and comment data. Read-only.
 Positions. A share pays $1 if its outcome resolves true and $0 if false, so its price is
 the market's implied probability (Yes at 0.62 = 62%).
 
-Ids. event id -> `get_comments`; conditionId (0x...) -> `get_market`, `get_holders`;
-clobTokenId -> the book/price tools. Prices are ALWAYS per outcome token, never per
-market. `outcomes`, `outcomePrices`, `clobTokenIds` are index-aligned.
+Ids. event id or slug -> `get_event`, `get_comments`; conditionId (0x...) ->
+`get_market`, `get_holders`; clobTokenId (on a market's `clobTokenIds`, from
+`get_market` or `get_event`) -> the book/price tools. Prices are ALWAYS per outcome
+token, never per market. `outcomes`, `outcomePrices`, `clobTokenIds` are index-aligned.
 
-Structure. A `market` is the atomic tradable (one `conditionId`, its `clobTokenIds`). An
-`event` groups markets (a "market page"). Over events sit two parallel groupings: `tags`
-(flat categories) and `series` (recurring/multi-part sets - each Fed decision, a monthly
-BTC strike ladder, a tournament's fixtures). `gameId` is a sports-only event attribute, not
-a level. Polymarket splits one topic across several separate sibling events, so `search`
-and a single event show only a fragment. Navigate by deepening (`list_tags`/`list_series`
--> `list_events(tag_id=/series_id=)` -> `get_event` -> markets) or flatten every atomic
-market under one scope with `collect_markets(series_id=|tag_id=|event=)`; for a sports game
-use `collect_markets(event=<slug>, group_by="gameId")` to gather all its sub-markets.
+Structure. A `market` is one question (one `conditionId`). An `event` groups markets (a
+"market page"). Over events sit two parallel groupings: `tags` (flat categories) and
+`series` (recurring/multi-part sets - each Fed decision, a monthly BTC strike ladder, a
+tournament's fixtures). `gameId` is a sports-only event attribute, not a level.
+Polymarket splits one topic across several separate sibling events, so `search` and a
+single event show only a fragment of a topic. `list_events(tag_id=|series_id=)` lists a
+grouping's events; `collect_markets(series_id=|tag_id=|event=)` returns every atomic
+market under one scope as a flat list, and with `group_by="gameId"` gathers a sports
+fixture's sub-markets across its sibling events.
+
+Pages. List tools return one page of `rows` plus `next_offset`/`next_page` when more
+rows exist; at the default verbosity ("minimal") some tools format rows as a markdown
+table. `verbosity="compact"` returns fuller objects and `"full"` the raw upstream ones.
 
 Order books. `get_order_book` returns a `summary` with `best_bid`, `best_ask`,
 `midpoint`, and `spread`. The `best_ask` is the price a buyer pays; the `best_bid` is
@@ -218,6 +224,14 @@ async def health() -> dict[str, Any]:
             "data": settings.data_host,
         },
     }
+
+
+@mcp.resource("polymarket://data-model", mime_type="text/markdown")
+def data_model() -> str:
+    """Polymarket's entity hierarchy (tag/series -> event -> market -> outcome
+    token), a glossary of the fields the tools return, and a worked example of
+    resolving a search hit down to an order book."""
+    return files("polygate_connector").joinpath("data_model.md").read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #

@@ -32,6 +32,9 @@ polygate-connector-stdio = "polygate_connector.mcp_server:run"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+polygate_connector = ["data_model.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
