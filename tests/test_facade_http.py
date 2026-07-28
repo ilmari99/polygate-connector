@@ -11,9 +11,9 @@ import httpx
 import pytest
 import respx
 
-from polygate.config import Settings
-from polygate.core.errors import UpstreamError, ValidationError
-from polygate.services.facade import PolymarketService
+from polygate_connector.config import Settings
+from polygate_connector.core.errors import UpstreamError, ValidationError
+from polygate_connector.services.facade import PolymarketService
 
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
@@ -93,7 +93,7 @@ async def test_get_event_by_slug(service):
 
 @respx.mock
 async def test_get_event_unknown_is_not_found(service):
-    from polygate.core.errors import NotFoundError
+    from polygate_connector.core.errors import NotFoundError
 
     respx.get(f"{GAMMA}/events").mock(return_value=httpx.Response(200, json=[]))
     with pytest.raises(NotFoundError):

@@ -1,6 +1,6 @@
 """Model Context Protocol (MCP) server for read-only Polymarket research.
 
-Wraps :class:`~polygate.services.facade.PolymarketService` and exposes public
+Wraps :class:`~polygate_connector.services.facade.PolymarketService` and exposes public
 Polymarket data - events, markets, order books, prices, comments, holders - to
 any MCP host. No account, credentials, or wallet are involved; every tool is
 read-only.
@@ -20,17 +20,17 @@ from .core import logging as core_logging
 from .core.errors import PlatformError
 from .services.facade import PolymarketService
 
-log = logging.getLogger("polygate.mcp")
+log = logging.getLogger("polygate_connector.mcp")
 
 # Process-wide service, built once during the server lifespan.
 _service: PolymarketService | None = None
 
 
 def _configure_stderr_logging(level: str = "INFO") -> None:
-    """Route all PolyGate logging to stderr.
+    """Route all server logging to stderr.
 
     A stdio MCP server speaks JSON-RPC on **stdout**; anything else written there
-    corrupts the stream. PolyGate's default :func:`core.logging.configure_logging`
+    corrupts the stream. The package's default :func:`core.logging.configure_logging`
     logs to stdout, so we install our own stderr handler instead and mark the
     shared logging module as configured to stop it ever attaching a stdout one.
     """
@@ -38,7 +38,7 @@ def _configure_stderr_logging(level: str = "INFO") -> None:
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     )
-    root = logging.getLogger("polygate")
+    root = logging.getLogger("polygate_connector")
     root.setLevel(level.upper())
     # Avoid duplicate handlers if this runs twice (e.g. in tests).
     if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
@@ -50,7 +50,7 @@ def _configure_stderr_logging(level: str = "INFO") -> None:
 
 def _require_service() -> PolymarketService:
     if _service is None:  # pragma: no cover - lifespan always sets it
-        raise RuntimeError("PolyGate service is not initialised.")
+        raise RuntimeError("Service is not initialised.")
     return _service
 
 
@@ -70,19 +70,19 @@ async def _serialize(awaitable: Any) -> dict[str, Any]:
 
 @asynccontextmanager
 async def _lifespan(_server: "FastMCP") -> AsyncIterator[None]:
-    """Build the PolyGate service once, tear it down on shutdown."""
+    """Build the Polymarket service once, tear it down on shutdown."""
     global _service
     get_settings.cache_clear()
     settings = get_settings()
     _configure_stderr_logging(settings.log_level)
     _service = PolymarketService(settings)
-    log.info("PolyGate MCP server ready (version %s).", __version__)
+    log.info("Polymarket research MCP server ready (version %s).", __version__)
     try:
         yield
     finally:
         await _service.aclose()
         _service = None
-        log.info("PolyGate MCP server stopped.")
+        log.info("Polymarket research MCP server stopped.")
 
 
 # Importing FastMCP here keeps the import error (if `mcp` is missing) close to the
@@ -91,8 +91,8 @@ try:
     from mcp.server.fastmcp import FastMCP
 except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
     raise ModuleNotFoundError(
-        "The 'mcp' package is required for the PolyGate MCP server. Install it "
-        "with `pip install mcp` (or reinstall polygate, which depends on it)."
+        "The 'mcp' package is required for this MCP server. Install it "
+        "with `pip install mcp` (or reinstall polygate-connector, which depends on it)."
     ) from exc
 
 
@@ -131,13 +131,15 @@ Numbers. CLOB values (price, midpoint, spread, book) are strings - coerce before
 
 
 mcp = FastMCP(
-    "polygate",
+    "polymarket-research",
     instructions=INSTRUCTIONS,
     lifespan=_lifespan,
+    stateless_http=True,
 )
 # FastMCP doesn't expose the low-level server's version, so it otherwise defaults
 # to the MCP SDK's own version in the initialize handshake (a host would show
-# e.g. "polygate 1.28.0"). Set it to our package version so serverInfo is right.
+# e.g. "polymarket-research 1.28.0"). Set it to our package version so serverInfo
+# is right.
 mcp._mcp_server.version = __version__
 
 

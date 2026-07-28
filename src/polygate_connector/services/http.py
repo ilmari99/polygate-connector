@@ -26,7 +26,7 @@ class HttpClient:
     def __init__(self, *, timeout: float = 15.0, max_retries: int = 3):
         self._client = httpx.AsyncClient(
             timeout=timeout,
-            headers={"User-Agent": f"polygate/{__version__}"},
+            headers={"User-Agent": f"polygate-connector/{__version__}"},
             follow_redirects=True,
         )
         self._max_retries = max(1, max_retries)

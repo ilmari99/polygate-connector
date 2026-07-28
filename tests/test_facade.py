@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from polygate.config import get_settings
-from polygate.core.errors import NotFoundError
-from polygate.services.facade import PolymarketService, _flatten_search
+from polygate_connector.config import get_settings
+from polygate_connector.core.errors import NotFoundError
+from polygate_connector.services.facade import PolymarketService, _flatten_search
 
 
 def _service(monkeypatch, read_return):

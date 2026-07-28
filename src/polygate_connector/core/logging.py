@@ -7,7 +7,7 @@ import sys
 
 _CONFIGURED = False
 
-log = logging.getLogger("polygate")
+log = logging.getLogger("polygate_connector")
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -17,7 +17,7 @@ def configure_logging(level: str = "INFO") -> None:
         return
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger("polygate")
+    root = logging.getLogger("polygate_connector")
     root.setLevel(level.upper())
     root.addHandler(handler)
     root.propagate = False

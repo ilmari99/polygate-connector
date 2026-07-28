@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from polygate import mcp_server
-from polygate.models.common import ResponseEnvelope
+from polygate_connector import mcp_server
+from polygate_connector.models.common import ResponseEnvelope
 
 
 class _FakeService:

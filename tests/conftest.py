@@ -15,7 +15,7 @@ import pytest
 for _var in ("GAMMA_HOST", "CLOB_HOST", "DATA_HOST", "PUBLIC_HOST"):
     os.environ.pop(_var, None)
 
-from polygate.config import get_settings  # noqa: E402
+from polygate_connector.config import get_settings  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

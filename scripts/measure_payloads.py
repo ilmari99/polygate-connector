@@ -22,8 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from polygate.config import get_settings
-from polygate.services.facade import PolymarketService
+from polygate_connector.config import get_settings
+from polygate_connector.services.facade import PolymarketService
 
 
 def _size(payload: Any) -> int:
@@ -119,7 +119,7 @@ async def main() -> int:
             rows.append(("get_last_trade_price", "SKIPPED: no token id discovered"))
             rows.append(("get_prices_history", "SKIPPED: no token id discovered"))
 
-        from polygate import mcp_server
+        from polygate_connector import mcp_server
 
         recorder.current_tool = "health"
         rows.append(("health", _size(await mcp_server.health())))

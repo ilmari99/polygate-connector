@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from polygate.models.common import ResponseEnvelope
+from polygate_connector.models.common import ResponseEnvelope
 
 
 def test_envelope_sets_timestamp_and_source():

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from polygate.services.transform import (
+from polygate_connector.services.transform import (
     clean_event,
     clean_events,
     clean_market,
