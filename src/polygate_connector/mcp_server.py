@@ -40,7 +40,7 @@ log = logging.getLogger("polygate_connector.mcp")
 _service: PolymarketService | None = None
 
 
-def _configure_stderr_logging(level: str = "INFO") -> None:
+def _configure_stderr_logging(level: str = "INFO", *, log_queries: bool = False) -> None:
     """Route all server logging to stderr.
 
     A stdio MCP server speaks JSON-RPC on **stdout**; anything else written there
@@ -60,9 +60,13 @@ def _configure_stderr_logging(level: str = "INFO") -> None:
     root.propagate = False
     # Block core.logging.configure_logging() from adding a stdout handler later.
     core_logging._CONFIGURED = True  # type: ignore[attr-defined]
-    # httpx/httpcore log full request URLs at INFO - including user query
-    # strings - which would violate the no-query-logging privacy promise.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # httpx logs full request URLs at INFO - including user query strings.
+    # That is the LOG_QUERIES opt-in signal; with it off (the default) those
+    # loggers are pinned above INFO so no query content can reach the logs,
+    # matching the strict privacy-policy claim. httpcore is noise either way.
+    logging.getLogger("httpx").setLevel(
+        logging.INFO if log_queries else logging.WARNING
+    )
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
@@ -142,7 +146,7 @@ async def service_context() -> AsyncIterator[PolymarketService]:
         return
     get_settings.cache_clear()
     settings = get_settings()
-    _configure_stderr_logging(settings.log_level)
+    _configure_stderr_logging(settings.log_level, log_queries=settings.log_queries)
     _service = PolymarketService(settings)
     log.info("Polymarket research MCP server ready (version %s).", __version__)
     try:

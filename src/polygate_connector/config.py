@@ -31,6 +31,10 @@ class Settings(BaseSettings):
 
     # --- Logging ---
     log_level: str = Field(default="INFO")
+    # Preview-mode visibility: also log upstream request URLs, which include
+    # search terms and market ids (never IPs or identities). Off by default;
+    # enabling it MUST be matched by the published privacy policy.
+    log_queries: bool = Field(default=False)
 
     # --- Outbound HTTP behaviour ---
     http_timeout_seconds: float = Field(default=15.0)

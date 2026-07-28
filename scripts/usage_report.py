@@ -20,12 +20,16 @@ import fileinput
 import re
 import statistics
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
+from urllib.parse import parse_qs, urlparse
 
 LINE = re.compile(
     r"tool=(?P<tool>\S+) duration_ms=(?P<ms>\d+) status=(?P<status>\S+)"
     r"(?: bytes=(?P<bytes>\S+) returned=(?P<returned>\S+))?"
 )
+
+# Present only when the server runs with LOG_QUERIES=true.
+URL_LINE = re.compile(r'HTTP Request: GET (?P<url>https://\S+polymarket\.com\S+)')
 
 
 def main() -> int:
@@ -33,8 +37,16 @@ def main() -> int:
     sizes: dict[str, list[int]] = defaultdict(list)
     errors: dict[str, int] = defaultdict(int)
     statuses: dict[str, int] = defaultdict(int)
+    queries: Counter[str] = Counter()
+    upstream_paths: Counter[str] = Counter()
 
     for line in fileinput.input():
+        url_match = URL_LINE.search(line)
+        if url_match:
+            parsed = urlparse(url_match["url"].rstrip('"'))
+            upstream_paths[parsed.path] += 1
+            for q in parse_qs(parsed.query).get("q", []):
+                queries[q] += 1
         match = LINE.search(line)
         if not match:
             continue
@@ -68,6 +80,15 @@ def main() -> int:
         breakdown = ", ".join(f"{k}: {v}" for k, v in sorted(statuses.items()))
         print(f" ({breakdown})", end="")
     print()
+
+    if queries:
+        print("\ntop search queries (LOG_QUERIES=true):")
+        for q, n in queries.most_common(15):
+            print(f"  {n:>4}  {q}")
+    if upstream_paths:
+        print("\nupstream paths:")
+        for path, n in upstream_paths.most_common():
+            print(f"  {n:>4}  {path}")
     return 0
 
 

@@ -130,11 +130,13 @@ Polymarket's APIs.
 
 ## Data handling
 
-No accounts, no user data, no query logging. The server keeps operational
-logs of tool name, duration, status, response size, and row count only -
-never arguments, results, or IP addresses beyond transient rate limiting
-(`scripts/usage_report.py` aggregates them into a usage report). Queries are forwarded to
-Polymarket's public APIs. Full policy: [docs/privacy-policy.md](docs/privacy-policy.md).
+No accounts, no user identity, no IP logging. The server keeps operational
+logs of tool name, duration, status, response size, and row count
+(`scripts/usage_report.py` aggregates them into a usage report). During the
+public preview, upstream request URLs - search terms and market ids, never
+tied to an IP or identity - are also logged to understand usage; results are
+never logged. Queries are forwarded to Polymarket's public APIs. Full
+policy: [docs/privacy-policy.md](docs/privacy-policy.md).
 
 ## Support
 
