@@ -317,11 +317,12 @@ def test_clean_series_minimal_projects_allowlist():
     assert "description" not in out
 
 
-def test_clean_tags_minimal_keeps_id_label_slug():
-    raw = [{"id": "1", "label": "Politics", "slug": "politics",
+def test_clean_tags_minimal_keeps_id_label_slug_forceshow():
+    raw = [{"id": "1", "label": "Politics", "slug": "politics", "forceShow": False,
             "createdAt": "2020-01-01", "requiresTranslation": False}]
     out = clean_tags(raw, verbosity="minimal")
-    assert out == [{"id": "1", "label": "Politics", "slug": "politics"}]
+    # forceShow rides along (False is data, not noise - prune only drops None/"").
+    assert out == [{"id": "1", "label": "Politics", "slug": "politics", "forceShow": False}]
 
 
 # --- comments / holders ---

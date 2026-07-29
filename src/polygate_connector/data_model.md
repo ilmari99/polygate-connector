@@ -7,7 +7,9 @@ tag (category) ─┐
 series ─────────┼─> event ─> market ─> outcome token (Yes / No)
 ```
 
-- **tag** - a flat category (`id`, `label`, `slug`). Filter listings with `tag_id`.
+- **tag** - a flat label (`id`, `label`, `slug`); thousands of them, from broad
+  categories to single entities, overlapping rather than partitioning topics -
+  one topic's markets can sit under several tags. Filter listings with `tag_id`.
 - **series** - a recurring or multi-part set of events: each Fed decision, a
   monthly BTC strike ladder, a tournament's fixtures. Filter with `series_id`.
 - **event** - a "market page" grouping one or more markets. Keyed by numeric

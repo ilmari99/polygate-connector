@@ -35,6 +35,11 @@ MARKET_SCAN_MAX_EVENTS = 5000
 # request timeout; past the deadline it fails loud with narrowing guidance.
 COLLECT_SCAN_DEADLINE_SECONDS = 20.0
 
+# Guard for the full tag-catalog walk behind ``list_tags(contains=...)``.
+# The catalog is ~7,000 rows (70 pages) today; if it ever blows past this,
+# the scan fails loud rather than hammering Gamma indefinitely.
+TAG_CATALOG_MAX_ROWS = 10_000
+
 # --- List defaults and bounds ---
 # Response size is a connector review criterion: list tools default small and
 # page, rather than defaulting large. The caller's limit is clamped server-side
@@ -55,7 +60,9 @@ CACHE_TTLS = {
     "/markets": 45.0,
     "/events": 45.0,
     "/series": 45.0,
-    "/tags": 45.0,
+    # The tag catalog changes rarely and a contains-filter walks all ~70
+    # pages of it, so it caches longer than the other catalog listings.
+    "/tags": 300.0,
     "/public-search": 300.0,
     "/book": 15.0,
     "/last-trade-price": 15.0,

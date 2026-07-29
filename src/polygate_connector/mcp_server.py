@@ -455,16 +455,32 @@ async def collect_markets(
 
 @read_tool("List categories")
 async def list_tags(
-    limit: int = 50, offset: int = 0, verbosity: Verbosity = "minimal"
+    contains: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    verbosity: Verbosity = "minimal",
 ) -> dict[str, Any]:
-    """List the category tags listings can be filtered by (id, label, slug).
+    """List the tags (`tag_id` filter keys) attached to Polymarket listings.
 
-    The catalog holds a few hundred tags; results arrive as a page of rows
-    with `next_offset` when more exist (`limit` is capped at 100 server-side).
+    The catalog is a flat, uncurated pile of ~7,000 tags: a handful of broad
+    categories ('Sports', 'Politics') alongside individual people, teams,
+    leagues, stocks, internal labels, and preserved typos. Tags overlap and
+    do not partition topics - one topic's markets can sit under several tags
+    ('video games', 'GTA 6', ...), so a complete sweep may need a union.
+    `contains` filters the whole catalog by case-insensitive label/slug
+    substring (first call walks every page - a few seconds - then cached;
+    `context` reports the match and catalog counts). Without `contains`,
+    rows arrive one page at a time in stable id order, which is creation
+    order: the tail of the catalog is its newest tags. `limit` caps at 100
+    server-side; `next_offset` pages onward. `forceShow` is Polymarket's
+    display flag, exposed as-is; measured on the live catalog it is sparse
+    and not a reliable curation signal.
     """
     return await _run_tool(
         "list_tags",
-        _require_service().list_tags(limit=limit, offset=offset, verbosity=verbosity),
+        _require_service().list_tags(
+            contains=contains, limit=limit, offset=offset, verbosity=verbosity
+        ),
     )
 
 
@@ -548,8 +564,10 @@ async def search(
     can return near-zero results while a short single-concept one ('GTA',
     'Iran') recalls well; several narrow queries cover a topic better than one
     long phrase. Rows follow upstream relevance order, not size - a large
-    event can rank past the requested page; `list_events(tag_id=...)` is the
-    exhaustive path through a category.
+    event can rank past the requested page. `list_events(tag_id=...)` is
+    exhaustive within one tag, but tags overlap rather than partition topics,
+    so a complete topical sweep may need several tags
+    (`list_tags(contains=...)` finds the candidates).
     """
     table = SEARCH_COLUMNS if verbosity == "minimal" else None
     return await _run_tool(

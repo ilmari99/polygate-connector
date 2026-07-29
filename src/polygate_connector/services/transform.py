@@ -166,7 +166,11 @@ _COMPACT_SERIES_FIELDS = frozenset(
     }
 )
 
-_MINIMAL_TAG_FIELDS = frozenset({"id", "label", "slug"})
+# ``forceShow`` rides along even at minimal: it is Polymarket's own display
+# flag, exposed so consumers can judge it - measured on the live catalog it
+# is sparse and NOT a reliable curation signal ("Sports" is false while a
+# deprecated ops tag is true).
+_MINIMAL_TAG_FIELDS = frozenset({"id", "label", "slug", "forceShow"})
 _COMPACT_TAG_FIELDS = frozenset({"id", "label", "slug", "forceShow"})
 
 # The slim reference kept for each ``series`` entry nested inside an event -

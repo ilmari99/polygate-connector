@@ -100,6 +100,33 @@ async def test_list_markets_aliases_string_sort_columns(monkeypatch):
 # --- list_tags: explicit paging over the tag catalog ---
 
 
+_TAG_CATALOG = [
+    {"id": "1", "label": "Sports", "slug": "sports"},
+    {"id": "3", "label": "video games", "slug": "video-games"},
+    {"id": "4", "label": "GTA 6", "slug": "gta-6"},
+    {"id": "104990", "label": "Video Gmaes", "slug": "video-gmaes"},
+]
+
+
+async def test_list_tags_contains_filters_whole_catalog(monkeypatch):
+    svc = _service(monkeypatch, _TAG_CATALOG)  # one short page ends the walk
+    page = await svc.list_tags(contains="Video", limit=1)
+    # The walk is pinned to stable id order.
+    assert svc._last_params["order"] == "id"
+    assert svc._last_params["ascending"] is True
+    # Case-insensitive label/slug match; catalog order preserved; paged.
+    assert [t["id"] for t in page.rows] == ["3"]
+    assert page.next_offset == 1
+    assert page.context == {"contains": "video", "matched": 2, "catalog_size": 4}
+    second = await svc.list_tags(contains="Video", limit=1, offset=1)
+    assert [t["id"] for t in second.rows] == ["104990"]
+    assert second.next_offset is None
+    # Slug-only matches count too.
+    slug_hit = await svc.list_tags(contains="gta")
+    assert [t["id"] for t in slug_hit.rows] == ["4"]
+    await svc.aclose()
+
+
 async def test_list_tags_pages_with_explicit_limit(monkeypatch):
     svc = _service(monkeypatch, lambda params: [
         {"id": str(i), "label": f"t{i}", "slug": f"t{i}"}

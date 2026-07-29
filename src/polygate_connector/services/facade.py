@@ -23,6 +23,7 @@ from ..constants import (
     GAMMA_PAGE_LIMIT,
     MARKET_SCAN_MAX_EVENTS,
     MAX_LIST_LIMIT,
+    TAG_CATALOG_MAX_ROWS,
 )
 from ..core.errors import NotFoundError, UpstreamError, ValidationError
 from ..models.common import ListPage, ResponseEnvelope
@@ -421,23 +422,81 @@ class PolymarketService:
             context={"scope": scope, "event_count": len(events)},
         )
 
+    async def _read_all_tags(self) -> list[Any]:
+        """Walk the entire tag catalog (~7,000 rows), one Gamma page at a time.
+
+        Only walkable because the sort is pinned to ``id``; each page is
+        cached individually, so repeat scans within the TTL cost nothing.
+        """
+        collected: list[Any] = []
+        offset = 0
+        while True:
+            page = await self._read(
+                self._gamma_host,
+                "/tags",
+                "gamma",
+                {
+                    "order": "id",
+                    "ascending": True,
+                    "limit": GAMMA_PAGE_LIMIT,
+                    "offset": offset,
+                },
+            )
+            if not isinstance(page, list) or not page:
+                break
+            collected.extend(page)
+            if len(page) < GAMMA_PAGE_LIMIT:
+                break
+            if len(collected) >= TAG_CATALOG_MAX_ROWS:
+                raise ValidationError(
+                    f"The tag catalog exceeded the {TAG_CATALOG_MAX_ROWS}-row scan "
+                    "guard; page it directly with list_tags(limit=, offset=) instead "
+                    "of contains=."
+                )
+            offset += GAMMA_PAGE_LIMIT
+        return collected
+
     async def list_tags(
         self,
         *,
+        contains: str | None = None,
         limit: int = DEFAULT_TAGS_LIMIT,
         offset: int = 0,
         verbosity: Verbosity = "minimal",
     ) -> ListPage:
-        """Page through the category-tag catalog (a few hundred tags).
+        """Page through the category-tag catalog (a few thousand tags).
 
         Without an explicit limit Gamma returns an arbitrary 50 tags, which
         made the catalog impossible to enumerate; explicit paging fixes that.
         The sort is pinned to ``id`` because Gamma's default order is
         arbitrary - unstable order across offset pages could silently skip
-        or duplicate rows.
+        or duplicate rows. ``contains`` filters the whole catalog by
+        case-insensitive label/slug substring, since Gamma itself exposes no
+        tag filter and topic coverage is split across overlapping tags.
         """
         clamped = limit > MAX_LIST_LIMIT
         limit = _clamp(limit)
+        if contains:
+            needle = contains.strip().lower()
+            catalog = await self._read_all_tags()
+            matches = [
+                t
+                for t in catalog
+                if isinstance(t, dict)
+                and (
+                    needle in str(t.get("label") or "").lower()
+                    or needle in str(t.get("slug") or "").lower()
+                )
+            ]
+            rows = clean_tags(matches[offset : offset + limit], verbosity=verbosity)
+            more = offset + len(rows) < len(matches)
+            return ListPage.of(
+                rows,
+                "gamma",
+                next_offset=offset + len(rows) if more else None,
+                truncated=clamped,
+                context={"contains": needle, "matched": len(matches), "catalog_size": len(catalog)},
+            )
         data = await self._read_paged(
             self._gamma_host,
             "/tags",
