@@ -437,7 +437,10 @@ async def collect_markets(
     `event_title`/`event_slug` and carrying its `conditionId`; `context`
     echoes the resolved scope and event count. The scan runs to completion
     and errors (with narrowing guidance) if the scope is too broad or too
-    slow to gather - never silently partial.
+    slow to gather - never silently partial. The very largest scopes (broad
+    tags like Sports, ~2,000+ events) exceed upstream pagination and cannot
+    be flattened in one call; a series_id, a narrower tag, or a single
+    event can.
     """
     return await _run_tool(
         "collect_markets",

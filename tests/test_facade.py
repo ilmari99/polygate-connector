@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from polygate_connector.config import get_settings
-from polygate_connector.core.errors import NotFoundError
+from polygate_connector.core.errors import NotFoundError, UpstreamError, ValidationError
 from polygate_connector.services.facade import PolymarketService, _flatten_search
 
 
@@ -98,6 +98,48 @@ async def test_list_markets_aliases_string_sort_columns(monkeypatch):
 
 
 # --- list_tags: explicit paging over the tag catalog ---
+
+
+# --- collect_markets: Gamma's offset ceiling surfaces as narrowing guidance ---
+
+
+async def test_scan_translates_mid_pagination_422(monkeypatch):
+    def read(params):
+        if params.get("offset", 0) > 0:
+            raise UpstreamError("gamma returned 422: offset too large, use "
+                                "/events/keyset", status_code=422)
+        # A full page keeps the scan going to the next offset.
+        return [{"id": str(i), "markets": []} for i in range(100)]
+
+    svc = _service(monkeypatch, read)
+    with pytest.raises(ValidationError) as exc:
+        await svc.collect_markets(tag_id=1)
+    assert "Narrow it" in str(exc.value)
+    assert "keyset" not in str(exc.value)  # upstream internals stay hidden
+    await svc.aclose()
+
+
+async def test_scan_first_page_422_stays_upstream_error(monkeypatch):
+    def read(params):
+        raise UpstreamError("gamma returned 422: bad parameter", status_code=422)
+
+    svc = _service(monkeypatch, read)
+    with pytest.raises(UpstreamError):
+        await svc.collect_markets(tag_id=1)
+    await svc.aclose()
+
+
+# --- get_comments: upstream over-returns its limit ---
+
+
+async def test_comments_limit_enforced_client_side(monkeypatch):
+    svc = _service(monkeypatch, [
+        {"id": i, "body": f"c{i}", "profile": {"name": "u"}} for i in range(25)
+    ])
+    page = await svc.comments(411239, limit=10)
+    assert page.returned == 10  # upstream sent 25; the contract is 10
+    assert page.next_offset == 10
+    await svc.aclose()
 
 
 _TAG_CATALOG = [

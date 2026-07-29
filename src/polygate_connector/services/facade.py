@@ -318,13 +318,27 @@ class PolymarketService:
                     f"{COLLECT_SCAN_DEADLINE_SECONDS:.0f}s time budget; narrow it "
                     "(e.g. use a series_id, a more specific tag, or a single event)."
                 )
-            page = await self._read(
-                self._gamma_host,
-                "/events",
-                "gamma",
-                {**filters, "active": active, "closed": closed,
-                 "limit": GAMMA_PAGE_LIMIT, "offset": cursor},
-            )
+            try:
+                page = await self._read(
+                    self._gamma_host,
+                    "/events",
+                    "gamma",
+                    {**filters, "active": active, "closed": closed,
+                     "limit": GAMMA_PAGE_LIMIT, "offset": cursor},
+                )
+            except UpstreamError as exc:
+                # Gamma 422s offset pagination past ~2,000 events ("use
+                # /events/keyset"). Mid-scan that means the scope, not the
+                # request, is the problem - surface it as narrowing guidance
+                # instead of leaking an upstream endpoint the caller can't use.
+                if exc.status_code == 422 and cursor > 0:
+                    raise ValidationError(
+                        "The scope spans more events than Gamma's pagination can "
+                        f"reach ({cursor}+); the very largest scopes cannot be "
+                        "flattened in one call. Narrow it: a series_id, a more "
+                        "specific tag, or a single event."
+                    ) from exc
+                raise
             if not isinstance(page, list):
                 raise UpstreamError("gamma returned a non-list response while paging /events")
             collected.extend(e for e in page if isinstance(e, dict))
@@ -367,7 +381,9 @@ class PolymarketService:
         ``conditionId`` directly; ``context`` echoes the resolved scope and
         event count. The underlying series/tag scan runs to completion (never
         silently partial) and fails loud - with narrowing guidance - if the
-        scope exceeds the event cap or the wall-clock deadline.
+        scope exceeds the event cap, the wall-clock deadline, or Gamma's own
+        offset-pagination ceiling (~2,000 events), which the very largest
+        tags exceed.
         """
         chosen = [(n, v) for n, v in
                   (("series_id", series_id), ("tag_id", tag_id), ("event", event))
@@ -628,6 +644,11 @@ class PolymarketService:
             },
         )
         rows = clean_comments(data, verbosity=verbosity)
+        # Gamma's /comments over-returns its limit (replies ride along with
+        # the top-level page: observed 11 and 25 rows for limit=10), so the
+        # page contract is enforced client-side.
+        if isinstance(rows, list):
+            rows = rows[:limit]
         return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)
 
     async def holders(
