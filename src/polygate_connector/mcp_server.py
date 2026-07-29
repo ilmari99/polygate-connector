@@ -382,8 +382,12 @@ async def get_event(key: str, verbosity: Verbosity = "compact") -> dict[str, Any
     slug or id from `search` or `list_events` into the full object; its
     `seriesSlug`/`gameId` fields identify the related sibling events. On
     negRisk events the result carries `outcome_price_sum` (the open markets'
-    first-outcome prices summed) and `has_active_other` (whether a catch-all
-    market is open to absorb the remainder).
+    first-outcome prices summed - mid-derived, so it drifts with spread) and
+    `has_active_other` (whether a catch-all market is open to absorb the
+    remainder); when every open market quotes both sides, `best_ask_sum`
+    (cost of buying every outcome) and `best_bid_sum` (proceeds of selling
+    every outcome) give the executable version, and `max_spread` reports the
+    widest constituent book.
     """
     return await _run_tool(
         "get_event", _require_service().get_event(key, verbosity=verbosity)

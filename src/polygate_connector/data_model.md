@@ -34,7 +34,8 @@ series ─────────┼─> event ─> market ─> outcome token (
 | `endDate` | When the market's question is scheduled to resolve |
 | `umaResolutionStatus(es)` | UMA oracle activity (`proposed`, `disputed`, ...): a resolution may be in flight |
 | `feesEnabled` / `feeType` / `feeSchedule` | Taker-fee terms; common across categories (`politics_fees`, `weather_fees`, `culture_fees`, `general_fees`), not an edge case |
-| `outcome_price_sum` / `has_active_other` | On negRisk events: open markets' first-outcome prices summed, and whether a catch-all market absorbs the remainder |
+| `outcome_price_sum` / `has_active_other` | On negRisk events: open markets' first-outcome prices summed (mid-derived - drifts with spread), and whether a catch-all market absorbs the remainder |
+| `best_ask_sum` / `best_bid_sum` / `max_spread` | The executable version: cost to buy / proceeds to sell every outcome (present only when all open markets quote both sides), and the widest constituent spread |
 | `market_count` / `top_markets` | On event list rows: how many markets the event holds, and its most liquid ones |
 | `next_offset` / `next_page` | Present on a list page when more rows exist upstream |
 | `truncated` | The result is not the complete set (clamped limit or size cap) |

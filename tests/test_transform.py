@@ -238,19 +238,49 @@ def test_clean_event_neg_risk_annotation():
         "id": "e1",
         "negRisk": True,
         "markets": [
-            _raw_market(outcomePrices='["0.62", "0.38"]', groupItemTitle="Alice", active=True),
-            _raw_market(outcomePrices='["0.33", "0.67"]', groupItemTitle="Bob", active=True),
-            _raw_market(outcomePrices='["0.20", "0.80"]', groupItemTitle="Other", active=True),
-            # Closed markets don't count toward the sum.
-            _raw_market(outcomePrices='["0.99", "0.01"]', groupItemTitle="Carol", closed=True),
+            _raw_market(outcomePrices='["0.62", "0.38"]', groupItemTitle="Alice",
+                        active=True, bestBid=0.60, bestAsk=0.64),
+            _raw_market(outcomePrices='["0.33", "0.67"]', groupItemTitle="Bob",
+                        active=True, bestBid=0.30, bestAsk=0.36),
+            _raw_market(outcomePrices='["0.20", "0.80"]', groupItemTitle="Other",
+                        active=True, bestBid=0.15, bestAsk=0.25),
+            # Closed markets don't count toward any sum.
+            _raw_market(outcomePrices='["0.99", "0.01"]', groupItemTitle="Carol",
+                        closed=True, bestBid=0.98, bestAsk=1.0),
         ],
     }
     out = clean_event(event, verbosity="compact")
     assert out["outcome_price_sum"] == round(0.62 + 0.33 + 0.20, 4)
     assert out["has_active_other"] is True
+    # Executable companions: full both-sides coverage across open markets.
+    assert out["best_bid_sum"] == round(0.60 + 0.30 + 0.15, 4)
+    assert out["best_ask_sum"] == round(0.64 + 0.36 + 0.25, 4)
+    assert out["max_spread"] == round(0.25 - 0.15, 4)
     # Survives the list-row projection (markets -> top_markets).
     row = clean_event_for_list(event, verbosity="minimal")
     assert row["outcome_price_sum"] == round(0.62 + 0.33 + 0.20, 4)
+    assert row["best_ask_sum"] == round(0.64 + 0.36 + 0.25, 4)
+
+
+def test_clean_event_neg_risk_omits_executable_sums_when_edge_incomplete():
+    # One open market missing an ask (one-sided book): a partial executable
+    # sum would mislead worse than none, so only the mid sum appears.
+    event = {
+        "id": "e1",
+        "negRisk": True,
+        "markets": [
+            _raw_market(outcomePrices='["0.62", "0.38"]', groupItemTitle="Alice",
+                        active=True, bestBid=0.60, bestAsk=0.64),
+            _raw_market(outcomePrices='["0.33", "0.67"]', groupItemTitle="Bob",
+                        active=True, bestBid=0.30),
+        ],
+    }
+    out = clean_event(event, verbosity="compact")
+    assert out["outcome_price_sum"] == round(0.62 + 0.33, 4)
+    assert "best_bid_sum" not in out
+    assert "best_ask_sum" not in out
+    # max_spread still reports the books that do quote both sides.
+    assert out["max_spread"] == round(0.64 - 0.60, 4)
 
 
 def test_clean_event_non_neg_risk_gets_no_annotation():

@@ -266,13 +266,22 @@ def _annotate_neg_risk(event: dict[str, Any]) -> None:
     ``outcome_price_sum`` is the sum of the first-outcome price over the
     event's open markets; ``has_active_other`` marks whether a catch-all
     market ("Other", "Someone else", ...) is among them to absorb the
-    remainder. A sum past 1.0 with no catch-all is the classic sign the
-    field's mid-derived prices are inconsistent.
+    remainder.
+
+    ``outcome_price_sum`` is mid-derived, so on wide books it drifts far
+    from anything executable (a 26-point "underround" that is really a 30c
+    spread). The companions carry the executable version: ``best_ask_sum``
+    (cost of buying every outcome) and ``best_bid_sum`` (proceeds of selling
+    every outcome) - included only when EVERY open market quotes both sides,
+    because a partial sum would mislead worse than none - plus
+    ``max_spread``, the widest constituent book.
     """
     markets = event.get("markets")
     if not isinstance(markets, list):
         return
     total, priced, has_other = 0.0, 0, False
+    bid_sum, ask_sum, edged = 0.0, 0.0, 0
+    max_spread: float | None = None
     for market in markets:
         if not isinstance(market, dict) or market.get("closed") or market.get("active") is False:
             continue
@@ -283,11 +292,23 @@ def _annotate_neg_risk(event: dict[str, Any]) -> None:
                 priced += 1
             except (TypeError, ValueError):
                 pass
+        bid, ask = market.get("bestBid"), market.get("bestAsk")
+        if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
+            bid_sum += bid
+            ask_sum += ask
+            edged += 1
+            spread = ask - bid
+            max_spread = spread if max_spread is None else max(max_spread, spread)
         if _OTHER_TITLE.search(str(market.get("groupItemTitle") or "")):
             has_other = True
     if priced:
         event["outcome_price_sum"] = round(total, 4)
         event["has_active_other"] = has_other
+        if edged == priced:
+            event["best_bid_sum"] = round(bid_sum, 4)
+            event["best_ask_sum"] = round(ask_sum, 4)
+        if max_spread is not None:
+            event["max_spread"] = round(max_spread, 4)
 
 
 def clean_event(event: Any, *, verbosity: Verbosity = "full") -> Any:
