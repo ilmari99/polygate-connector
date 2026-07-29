@@ -18,6 +18,7 @@ from ..constants import (
     DEFAULT_LIST_LIMIT,
     DEFAULT_PRICES_HISTORY_FIDELITY,
     DEFAULT_PRICES_HISTORY_INTERVAL,
+    DEFAULT_TAGS_LIMIT,
     DEFAULT_WIDE_LIMIT,
     GAMMA_PAGE_LIMIT,
     MARKET_SCAN_MAX_EVENTS,
@@ -46,6 +47,12 @@ from .transform import (
 def _clamp(limit: int) -> int:
     """Bound a caller-supplied limit; the requesting model's number is untrusted."""
     return max(1, min(limit, MAX_LIST_LIMIT))
+
+
+# Gamma's ``order`` sorts the named column as stored, and ``liquidity`` and
+# ``volume`` are stored as *strings* - sorting them is lexicographic, so
+# '99.999' ranks above '9999.9' descending. Redirect to their numeric twins.
+_NUMERIC_ORDER_ALIASES = {"liquidity": "liquidityNum", "volume": "volumeNum"}
 
 
 def _page(
@@ -170,7 +177,7 @@ class PolymarketService:
                     "active": active,
                     "closed": closed,
                     "tag_id": tag_id,
-                    "order": order,
+                    "order": _NUMERIC_ORDER_ALIASES.get(order, order),
                     "ascending": ascending,
                 },
                 limit=limit,
@@ -198,7 +205,16 @@ class PolymarketService:
                 f"No market found for condition_id={condition_id!r}. Pass a market "
                 "conditionId (0x...), e.g. from a search or list_markets result."
             )
-        return ResponseEnvelope.of(clean_market(market, verbosity=verbosity), source="gamma")
+        cleaned = clean_market(market, verbosity=verbosity)
+        if verbosity == "compact" and isinstance(cleaned, dict):
+            # The resolution criteria live in `description`/`resolutionSource`,
+            # and a single-market fetch is exactly where they matter - the
+            # detail call re-attaches them on top of the compact projection
+            # (list projections still drop them).
+            for key in ("description", "resolutionSource"):
+                if market.get(key):
+                    cleaned[key] = market[key]
+        return ResponseEnvelope.of(cleaned, source="gamma")
 
     async def list_events(
         self,
@@ -405,9 +421,25 @@ class PolymarketService:
             context={"scope": scope, "event_count": len(events)},
         )
 
-    async def list_tags(self, *, verbosity: Verbosity = "minimal") -> ListPage:
-        data = await self._read(self._gamma_host, "/tags", "gamma")
-        return ListPage.of(clean_tags(data, verbosity=verbosity), "gamma")
+    async def list_tags(
+        self,
+        *,
+        limit: int = DEFAULT_TAGS_LIMIT,
+        offset: int = 0,
+        verbosity: Verbosity = "minimal",
+    ) -> ListPage:
+        """Page through the category-tag catalog (a few hundred tags).
+
+        Without an explicit limit Gamma returns an arbitrary 50 tags, which
+        made the catalog impossible to enumerate; explicit paging fixes that.
+        """
+        clamped = limit > MAX_LIST_LIMIT
+        limit = _clamp(limit)
+        data = await self._read_paged(
+            self._gamma_host, "/tags", "gamma", {}, limit=limit, offset=offset
+        )
+        rows = clean_tags(data, verbosity=verbosity)
+        return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)
 
     # --- CLOB book / prices (keyed by outcome token id) ---
     async def order_book(self, token_id: str, *, full: bool = False) -> ResponseEnvelope:

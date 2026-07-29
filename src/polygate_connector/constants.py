@@ -41,6 +41,7 @@ COLLECT_SCAN_DEADLINE_SECONDS = 20.0
 # because the requesting model's number cannot be trusted.
 DEFAULT_LIST_LIMIT = 10   # list_markets, list_events, search
 DEFAULT_WIDE_LIMIT = 20   # list_series, get_holders, get_comments
+DEFAULT_TAGS_LIMIT = 50   # list_tags - rows are tiny (id/label/slug)
 MAX_LIST_LIMIT = 100
 
 # Hard ceiling on a single serialized tool result. Anything larger is reduced

@@ -41,9 +41,19 @@ def _outcome_prices(row: dict[str, Any]) -> Any:
     return row.get("outcomePrices")
 
 
+def _bid_ask(row: dict[str, Any]) -> Any:
+    """The executable book edge; `outcomePrices` alone (a midpoint) misleads
+    on wide-spread books, so every market row shows both."""
+    bid, ask = row.get("bestBid"), row.get("bestAsk")
+    if bid is None and ask is None:
+        return None
+    return f"{'-' if bid is None else bid} / {'-' if ask is None else ask}"
+
+
 MARKET_COLUMNS: list[Column] = [
     ("question", _get("question")),
     ("outcomes (price = implied probability)", _outcome_prices),
+    ("bestBid / bestAsk", _bid_ask),
     ("volume24hr", _get("volume24hr")),
     ("liquidity", _get("liquidityNum")),
     ("endDate", _date("endDate")),

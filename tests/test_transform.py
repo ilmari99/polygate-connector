@@ -85,6 +85,45 @@ def test_clean_market_minimal_keeps_only_scan_fields():
     assert "id" not in out
 
 
+def test_clean_market_minimal_keeps_book_edge():
+    # outcomePrices is a midpoint; rows must carry the executable edge too.
+    out = clean_market(
+        _raw_market(bestBid=0.01, bestAsk=0.65, spread=0.64), verbosity="minimal"
+    )
+    assert out["bestBid"] == 0.01
+    assert out["bestAsk"] == 0.65
+    assert out["spread"] == 0.64
+
+
+def test_clean_market_compact_keeps_resolution_and_fee_signals():
+    out = clean_market(
+        _raw_market(
+            umaResolutionStatus="disputed",
+            umaResolutionStatuses='["proposed", "disputed"]',
+            feesEnabled=True,
+            feeType="taker",
+        ),
+        verbosity="compact",
+    )
+    assert out["umaResolutionStatus"] == "disputed"
+    assert out["umaResolutionStatuses"] == ["proposed", "disputed"]  # decoded
+    assert out["feesEnabled"] is True
+    assert out["feeType"] == "taker"
+
+
+def test_clean_market_strips_stale_context_in_embedded_events():
+    market = _raw_market(
+        events=[{"id": "e1", "eventMetadata": {
+            "context_description": "stale narrative",
+            "context_requires_regen": True,
+        }}]
+    )
+    out = clean_market(market)  # full: embedded events only survive here
+    meta = out["events"][0]["eventMetadata"]
+    assert "context_description" not in meta
+    assert meta["context_requires_regen"] is True
+
+
 def test_clean_market_minimal_prunes_nulls():
     out = clean_market(_raw_market(volume24hr=None), verbosity="minimal")
     assert "volume24hr" not in out
@@ -137,6 +176,88 @@ def test_clean_event_compact_keeps_grouping_keys():
     assert out["tags"] == [{"id": "1", "slug": "sports"}]
     assert out["negRiskMarketID"] == "0xabc"
     assert "description" not in out and "image" not in out
+
+
+def test_clean_event_compact_projects_nested_tags_and_series():
+    event = {
+        "id": "e1",
+        "title": "Big",
+        "tags": [{
+            "id": "78", "label": "Iran", "slug": "iran", "forceShow": False,
+            "publishedAt": "2023-11-02", "updatedBy": 15, "createdAt": "x",
+            "updatedAt": "y", "requiresTranslation": False,
+        }],
+        "series": [{
+            "id": "3", "slug": "geo", "title": "Geo", "recurrence": "weekly",
+            "commentsEnabled": True, "createdAt": "x", "competitive": "0.9",
+        }],
+        "markets": [],
+    }
+    out = clean_event(event, verbosity="compact")
+    assert out["tags"] == [
+        {"id": "78", "label": "Iran", "slug": "iran", "forceShow": False}
+    ]
+    assert out["series"] == [
+        {"id": "3", "slug": "geo", "title": "Geo", "recurrence": "weekly"}
+    ]
+    # Full stays raw.
+    full = clean_event(event, verbosity="full")
+    assert "updatedBy" in full["tags"][0]
+
+
+def test_clean_event_strips_stale_context_at_every_tier():
+    event = {
+        "id": "e1",
+        "title": "T",
+        "eventMetadata": {
+            "context_description": "stale narrative",
+            "context_requires_regen": True,
+            "context_updated_at": "2026-06-18",
+        },
+    }
+    full = clean_event(event, verbosity="full")
+    assert "context_description" not in full["eventMetadata"]
+    assert full["eventMetadata"]["context_updated_at"] == "2026-06-18"
+    # The input object is not mutated.
+    assert "context_description" in event["eventMetadata"]
+
+
+def test_clean_event_keeps_fresh_context_at_full():
+    event = {
+        "id": "e1",
+        "eventMetadata": {"context_description": "current", "context_requires_regen": False},
+    }
+    out = clean_event(event, verbosity="full")
+    assert out["eventMetadata"]["context_description"] == "current"
+
+
+def test_clean_event_neg_risk_annotation():
+    event = {
+        "id": "e1",
+        "negRisk": True,
+        "markets": [
+            _raw_market(outcomePrices='["0.62", "0.38"]', groupItemTitle="Alice", active=True),
+            _raw_market(outcomePrices='["0.33", "0.67"]', groupItemTitle="Bob", active=True),
+            _raw_market(outcomePrices='["0.20", "0.80"]', groupItemTitle="Other", active=True),
+            # Closed markets don't count toward the sum.
+            _raw_market(outcomePrices='["0.99", "0.01"]', groupItemTitle="Carol", closed=True),
+        ],
+    }
+    out = clean_event(event, verbosity="compact")
+    assert out["outcome_price_sum"] == round(0.62 + 0.33 + 0.20, 4)
+    assert out["has_active_other"] is True
+    # Survives the list-row projection (markets -> top_markets).
+    row = clean_event_for_list(event, verbosity="minimal")
+    assert row["outcome_price_sum"] == round(0.62 + 0.33 + 0.20, 4)
+
+
+def test_clean_event_non_neg_risk_gets_no_annotation():
+    event = {"id": "e1", "markets": [_raw_market()]}
+    out = clean_event(event, verbosity="compact")
+    assert "outcome_price_sum" not in out
+    # Full tier is never annotated, negRisk or not.
+    full = clean_event({**event, "negRisk": True}, verbosity="full")
+    assert "outcome_price_sum" not in full
 
 
 def test_clean_event_for_list_keeps_top_markets_by_liquidity():

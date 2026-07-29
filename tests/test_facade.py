@@ -60,13 +60,56 @@ def test_flatten_search_ignores_non_dict():
 
 async def test_get_market_unwraps_single_object(monkeypatch):
     svc = _service(monkeypatch, [
-        {"conditionId": "0xabc", "clobTokenIds": "[\"1\",\"2\"]", "description": "noise"}
+        {"conditionId": "0xabc", "clobTokenIds": "[\"1\",\"2\"]",
+         "description": "Resolves YES if...", "resolutionSource": "https://example.com"}
     ])
     env = await svc.get_market("0xabc")
     assert isinstance(env.data, dict)  # NOT a 1-element list
     assert env.data["conditionId"] == "0xabc"
     assert env.data["clobTokenIds"] == ["1", "2"]  # decoded, kept at compact
-    assert "description" not in env.data  # compact by default
+    # The detail call keeps the resolution criteria on top of the compact
+    # projection (list projections still drop them).
+    assert env.data["description"] == "Resolves YES if..."
+    assert env.data["resolutionSource"] == "https://example.com"
+    await svc.aclose()
+
+
+async def test_get_market_minimal_still_drops_description(monkeypatch):
+    svc = _service(monkeypatch, [{"conditionId": "0xabc", "description": "long"}])
+    env = await svc.get_market("0xabc", verbosity="minimal")
+    assert "description" not in env.data
+    await svc.aclose()
+
+
+# --- sort aliasing: Gamma sorts string columns lexicographically ---
+
+
+async def test_list_markets_aliases_string_sort_columns(monkeypatch):
+    svc = _service(monkeypatch, [])
+    await svc.list_markets(order="liquidity")
+    assert svc._last_params["order"] == "liquidityNum"
+    await svc.list_markets(order="volume")
+    assert svc._last_params["order"] == "volumeNum"
+    await svc.list_markets(order="volume24hr")  # numeric column passes through
+    assert svc._last_params["order"] == "volume24hr"
+    await svc.list_markets()  # no order requested -> none sent
+    assert svc._last_params.get("order") is None
+    await svc.aclose()
+
+
+# --- list_tags: explicit paging over the tag catalog ---
+
+
+async def test_list_tags_pages_with_explicit_limit(monkeypatch):
+    svc = _service(monkeypatch, lambda params: [
+        {"id": str(i), "label": f"t{i}", "slug": f"t{i}"}
+        for i in range(params.get("limit", 0))
+    ])
+    page = await svc.list_tags(limit=2, offset=4)
+    assert svc._last_params["limit"] == 2
+    assert svc._last_params["offset"] == 4
+    assert page.returned == 2
+    assert page.next_offset == 6  # full page -> more may exist
     await svc.aclose()
 
 

@@ -10,20 +10,32 @@ These helpers shape the payloads to a chosen verbosity tier:
 * ``full`` - the raw upstream object (JSON-string fields still decoded).
 
 ``minimal`` and ``compact`` are also pruned: ``None``/empty-string values are
-dropped and floats rounded to 4 decimal places. ``full`` is never pruned.
+dropped and floats rounded to 4 decimal places. ``full`` is never pruned, with
+one deliberate exception: an event's AI-generated ``context_description`` is
+withheld at every tier when the platform itself flags it stale
+(``context_requires_regen``), so an outdated narrative can't read as current.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 Verbosity = Literal["minimal", "compact", "full"]
 
 # Market fields Gamma encodes as JSON strings; decoded in place to real values.
-_MARKET_JSON_FIELDS = ("outcomes", "outcomePrices", "clobTokenIds")
+_MARKET_JSON_FIELDS = (
+    "outcomes",
+    "outcomePrices",
+    "clobTokenIds",
+    "umaResolutionStatuses",
+)
 
 # Fields needed to scan a market list and pick an id to drill into.
+# ``bestBid``/``bestAsk``/``spread`` are included because ``outcomePrices`` is
+# midpoint-derived: on a wide spread it sits far from any executable price, and
+# rows without the book edge have proven actively misleading.
 _MINIMAL_MARKET_FIELDS = frozenset(
     {
         "question",
@@ -32,6 +44,9 @@ _MINIMAL_MARKET_FIELDS = frozenset(
         "groupItemTitle",
         "outcomes",
         "outcomePrices",
+        "bestBid",
+        "bestAsk",
+        "spread",
         "active",
         "closed",
         "endDate",
@@ -71,6 +86,12 @@ _COMPACT_MARKET_FIELDS = frozenset(
         "orderPriceMinTickSize",
         "orderMinSize",
         "negRisk",
+        # Resolution/viability signals: whether a UMA resolution is in flight
+        # (decisive on markets near 0 or 1) and whether taker fees apply.
+        "umaResolutionStatus",
+        "umaResolutionStatuses",
+        "feesEnabled",
+        "feeType",
         # Added by search flattening so callers keep parent context.
         "event_id",
         "event_title",
@@ -145,6 +166,11 @@ _COMPACT_SERIES_FIELDS = frozenset(
 _MINIMAL_TAG_FIELDS = frozenset({"id", "label", "slug"})
 _COMPACT_TAG_FIELDS = frozenset({"id", "label", "slug", "forceShow"})
 
+# The slim reference kept for each ``series`` entry nested inside an event -
+# enough to recognise and navigate to the series without repeating its
+# full catalog object on every event row.
+_EVENT_SERIES_FIELDS = frozenset({"id", "slug", "title", "recurrence"})
+
 _MINIMAL_COMMENT_FIELDS = frozenset({"body", "createdAt", "author", "reactionCount"})
 _COMPACT_COMMENT_FIELDS = frozenset(
     {"id", "body", "createdAt", "author", "reactionCount", "reportCount", "parentCommentID"}
@@ -157,6 +183,11 @@ _COMPACT_HOLDER_FIELDS = frozenset(
 
 # How many nested markets an event list row keeps (ranked by liquidity).
 TOP_MARKETS_PER_EVENT = 5
+
+# Catch-all market titles on negRisk events ("Other", "Another candidate",
+# "Someone else", "None of the above") - the market that absorbs probability
+# mass the named outcomes don't cover.
+_OTHER_TITLE = re.compile(r"\b(other|another|someone else|none of the)\b", re.IGNORECASE)
 
 # How many price levels per side an order book summary keeps.
 TOP_BOOK_LEVELS = 5
@@ -196,23 +227,90 @@ def _decode_json_fields(market: dict[str, Any]) -> dict[str, Any]:
     return market
 
 
+def _strip_stale_context(obj: Any) -> Any:
+    """Withhold the AI-generated ``context_description`` the platform itself
+    flags stale (``context_requires_regen``) - at every tier, ``full``
+    included, so an outdated narrative can't read as current."""
+    if not isinstance(obj, dict):
+        return obj
+    meta = obj.get("eventMetadata")
+    if isinstance(meta, dict) and meta.get("context_requires_regen"):
+        return {
+            **obj,
+            "eventMetadata": {k: v for k, v in meta.items() if k != "context_description"},
+        }
+    return obj
+
+
 def clean_market(market: Any, *, verbosity: Verbosity = "full") -> Any:
     """Decode a market's JSON fields and project it to the verbosity tier."""
     if not isinstance(market, dict):
         return market
     out = _decode_json_fields(dict(market))
+    # A market fetched directly embeds its parent events (full tier only).
+    if isinstance(out.get("events"), list):
+        out["events"] = [_strip_stale_context(e) for e in out["events"]]
     return _project(out, verbosity, _MINIMAL_MARKET_FIELDS, _COMPACT_MARKET_FIELDS)
 
 
+def _annotate_neg_risk(event: dict[str, Any]) -> None:
+    """Attach the standard negRisk sanity numbers to a cleaned event.
+
+    ``outcome_price_sum`` is the sum of the first-outcome price over the
+    event's open markets; ``has_active_other`` marks whether a catch-all
+    market ("Other", "Someone else", ...) is among them to absorb the
+    remainder. A sum past 1.0 with no catch-all is the classic sign the
+    field's mid-derived prices are inconsistent.
+    """
+    markets = event.get("markets")
+    if not isinstance(markets, list):
+        return
+    total, priced, has_other = 0.0, 0, False
+    for market in markets:
+        if not isinstance(market, dict) or market.get("closed") or market.get("active") is False:
+            continue
+        prices = market.get("outcomePrices")
+        if isinstance(prices, list) and prices:
+            try:
+                total += float(prices[0])
+                priced += 1
+            except (TypeError, ValueError):
+                pass
+        if _OTHER_TITLE.search(str(market.get("groupItemTitle") or "")):
+            has_other = True
+    if priced:
+        event["outcome_price_sum"] = round(total, 4)
+        event["has_active_other"] = has_other
+
+
 def clean_event(event: Any, *, verbosity: Verbosity = "full") -> Any:
-    """Clean an event and every market nested under it."""
+    """Clean an event and every market nested under it.
+
+    Nested ``tags`` and ``series`` are projected below ``full`` too - raw tag
+    objects carry nine audit fields each and once consumed most of a search
+    page's size budget. negRisk events additionally get
+    :func:`_annotate_neg_risk`'s computed check fields.
+    """
     if not isinstance(event, dict):
         return event
-    out = dict(event)
+    out = dict(_strip_stale_context(event))
     markets = out.get("markets")
     if isinstance(markets, list):
         out["markets"] = [clean_market(m, verbosity=verbosity) for m in markets]
-    return _project(out, verbosity, _MINIMAL_EVENT_FIELDS, _COMPACT_EVENT_FIELDS)
+    if verbosity != "full":
+        if isinstance(out.get("tags"), list):
+            out["tags"] = clean_tags(out["tags"], verbosity=verbosity)
+        if isinstance(out.get("series"), list):
+            out["series"] = [
+                prune({k: v for k, v in s.items() if k in _EVENT_SERIES_FIELDS})
+                if isinstance(s, dict)
+                else s
+                for s in out["series"]
+            ]
+    projected = _project(out, verbosity, _MINIMAL_EVENT_FIELDS, _COMPACT_EVENT_FIELDS)
+    if verbosity != "full" and event.get("negRisk"):
+        _annotate_neg_risk(projected)
+    return projected
 
 
 def _liquidity(market: Any) -> float:

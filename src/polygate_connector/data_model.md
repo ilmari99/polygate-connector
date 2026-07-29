@@ -23,13 +23,16 @@ series ─────────┼─> event ─> market ─> outcome token (
 | Field | Meaning |
 |---|---|
 | `outcomes` | Outcome names, e.g. `["Yes", "No"]` |
-| `outcomePrices` | Prices per outcome; a price is the implied probability |
+| `outcomePrices` | Midpoint-derived price per outcome (implied probability); far from executable on a wide `spread` |
 | `clobTokenIds` | Outcome token ids; index-aligned with `outcomes` and `outcomePrices` |
 | `conditionId` | Market id; the key for `get_market` and `get_holders` |
 | `liquidityNum` / `volumeNum` / `volume24hr` | Liquidity and traded volume in USD |
-| `bestBid` / `bestAsk` / `spread` | Top of the order book (Gamma's cached copy) |
+| `bestBid` / `bestAsk` / `spread` | Top of the order book (Gamma's cached copy) - the executable levels |
 | `active` / `closed` / `acceptingOrders` | Market lifecycle status |
 | `endDate` | When the market's question is scheduled to resolve |
+| `umaResolutionStatus(es)` | UMA oracle activity (`proposed`, `disputed`, ...): a resolution may be in flight |
+| `feesEnabled` / `feeType` | Whether the market charges taker fees, and which schedule |
+| `outcome_price_sum` / `has_active_other` | On negRisk events: open markets' first-outcome prices summed, and whether a catch-all market absorbs the remainder |
 | `market_count` / `top_markets` | On event list rows: how many markets the event holds, and its most liquid ones |
 | `next_offset` / `next_page` | Present on a list page when more rows exist upstream |
 | `truncated` | The result is not the complete set (clamped limit or size cap) |

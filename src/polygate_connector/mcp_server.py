@@ -208,6 +208,12 @@ Order books. `get_order_book` returns a `summary` with `best_bid`, `best_ask`,
 `midpoint`, and `spread`. The `best_ask` is the price a buyer pays; the `best_bid` is
 the price a seller receives; `midpoint` sits between them.
 
+Prices. Gamma's `outcomePrices` derives from the book midpoint: on a wide `spread` it
+sits far from any executable price, and across a multi-outcome field mid-derived
+prices can sum past 1.0 or rank illogically. `bestBid`/`bestAsk`/`spread` on market
+rows and `get_order_book` carry the executable levels; `get_last_trade_price` the
+last print.
+
 A market is open for trading on Polymarket when `active` is true, `closed` is false,
 `acceptingOrders` and `enableOrderBook` are true, and `endDate` is in the future.
 
@@ -289,7 +295,9 @@ async def list_markets(
 
     Each market carries a `conditionId` (the key for `get_market`/`get_holders`)
     and index-aligned `outcomes` and `outcomePrices` (each price is the implied
-    probability). Sort with `order` (e.g. 'volume24hr', 'liquidity') plus
+    probability; `bestBid`/`bestAsk`/`spread` are the executable book edge).
+    Sort with `order` (a numeric field: 'volume24hr', 'liquidityNum',
+    'volumeNum'; plain 'liquidity'/'volume' map to their numeric forms) plus
     `ascending`. Results arrive as a page of rows with `next_offset` when more
     exist; `limit` is capped at 100 server-side. At the default `verbosity`
     ("minimal") rows form a markdown table; "compact" returns projected
@@ -320,9 +328,11 @@ async def get_market(condition_id: str, verbosity: Verbosity = "compact") -> dic
     Returns the market object (not a list); a bad id yields a `not_found`
     error. The object carries the resolution and status fields - `question`,
     `endDate`, `active`/`closed`/`acceptingOrders`, `outcomes` with
-    `outcomePrices` - plus the `clobTokenIds` that key the order-book and
-    price tools. `verbosity="full"` returns every upstream field, including
-    `description` and `resolutionSource` (the exact resolution criteria).
+    `outcomePrices`, `description` and `resolutionSource` (the exact
+    resolution criteria), `umaResolutionStatus`/`umaResolutionStatuses` (any
+    oracle resolution in flight - decisive on markets near 0 or 1), and
+    `feesEnabled`/`feeType` - plus the `clobTokenIds` that key the order-book
+    and price tools. `verbosity="full"` returns every upstream field.
     """
     return await _run_tool(
         "get_market", _require_service().get_market(condition_id, verbosity=verbosity)
@@ -370,7 +380,10 @@ async def get_event(key: str, verbosity: Verbosity = "compact") -> dict[str, Any
 
     An event is a 'market page' grouping one or more atomic markets. Resolves a
     slug or id from `search` or `list_events` into the full object; its
-    `seriesSlug`/`gameId` fields identify the related sibling events.
+    `seriesSlug`/`gameId` fields identify the related sibling events. On
+    negRisk events the result carries `outcome_price_sum` (the open markets'
+    first-outcome prices summed) and `has_active_other` (whether a catch-all
+    market is open to absorb the remainder).
     """
     return await _run_tool(
         "get_event", _require_service().get_event(key, verbosity=verbosity)
@@ -441,9 +454,18 @@ async def collect_markets(
 
 
 @read_tool("List categories")
-async def list_tags(verbosity: Verbosity = "minimal") -> dict[str, Any]:
-    """List the category tags markets can be filtered by (id, label, slug)."""
-    return await _run_tool("list_tags", _require_service().list_tags(verbosity=verbosity))
+async def list_tags(
+    limit: int = 50, offset: int = 0, verbosity: Verbosity = "minimal"
+) -> dict[str, Any]:
+    """List the category tags listings can be filtered by (id, label, slug).
+
+    The catalog holds a few hundred tags; results arrive as a page of rows
+    with `next_offset` when more exist (`limit` is capped at 100 server-side).
+    """
+    return await _run_tool(
+        "list_tags",
+        _require_service().list_tags(limit=limit, offset=offset, verbosity=verbosity),
+    )
 
 
 @read_tool("Get order book")

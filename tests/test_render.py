@@ -34,6 +34,16 @@ def test_market_table_combines_outcomes_and_prices():
     assert "2026-12-31 " in lines[2] or "| 2026-12-31 |" in lines[2]  # date only
 
 
+def test_market_table_shows_book_edge():
+    row = {**_market_row(), "bestBid": 0.01, "bestAsk": 0.65}
+    table = markdown_table([row], MARKET_COLUMNS)
+    assert "bestBid / bestAsk" in table.splitlines()[0]
+    assert "0.01 / 0.65" in table.splitlines()[2]
+    # A row with no book fields renders an empty cell, not a crash.
+    bare = markdown_table([_market_row()], MARKET_COLUMNS)
+    assert len(bare.splitlines()) == 3
+
+
 def test_table_escapes_pipes_and_newlines():
     rows = [{"outcomeIndex": 0, "name": "a|b", "amount": 1.0}]
     table = markdown_table(rows, HOLDER_COLUMNS)
