@@ -432,11 +432,19 @@ class PolymarketService:
 
         Without an explicit limit Gamma returns an arbitrary 50 tags, which
         made the catalog impossible to enumerate; explicit paging fixes that.
+        The sort is pinned to ``id`` because Gamma's default order is
+        arbitrary - unstable order across offset pages could silently skip
+        or duplicate rows.
         """
         clamped = limit > MAX_LIST_LIMIT
         limit = _clamp(limit)
         data = await self._read_paged(
-            self._gamma_host, "/tags", "gamma", {}, limit=limit, offset=offset
+            self._gamma_host,
+            "/tags",
+            "gamma",
+            {"order": "id", "ascending": True},
+            limit=limit,
+            offset=offset,
         )
         rows = clean_tags(data, verbosity=verbosity)
         return _page(rows, "gamma", limit=limit, offset=offset, clamped=clamped)

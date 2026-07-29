@@ -31,7 +31,7 @@ series ─────────┼─> event ─> market ─> outcome token (
 | `active` / `closed` / `acceptingOrders` | Market lifecycle status |
 | `endDate` | When the market's question is scheduled to resolve |
 | `umaResolutionStatus(es)` | UMA oracle activity (`proposed`, `disputed`, ...): a resolution may be in flight |
-| `feesEnabled` / `feeType` | Whether the market charges taker fees, and which schedule |
+| `feesEnabled` / `feeType` / `feeSchedule` | Taker-fee terms; common across categories (`politics_fees`, `weather_fees`, `culture_fees`, `general_fees`), not an edge case |
 | `outcome_price_sum` / `has_active_other` | On negRisk events: open markets' first-outcome prices summed, and whether a catch-all market absorbs the remainder |
 | `market_count` / `top_markets` | On event list rows: how many markets the event holds, and its most liquid ones |
 | `next_offset` / `next_page` | Present on a list page when more rows exist upstream |

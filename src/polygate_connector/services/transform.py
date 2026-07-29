@@ -88,10 +88,13 @@ _COMPACT_MARKET_FIELDS = frozenset(
         "negRisk",
         # Resolution/viability signals: whether a UMA resolution is in flight
         # (decisive on markets near 0 or 1) and whether taker fees apply.
+        # Fees are the rule, not the exception, across politics/weather/
+        # culture/gaming categories, so the full schedule rides along.
         "umaResolutionStatus",
         "umaResolutionStatuses",
         "feesEnabled",
         "feeType",
+        "feeSchedule",
         # Added by search flattening so callers keep parent context.
         "event_id",
         "event_title",

@@ -108,6 +108,10 @@ async def test_list_tags_pages_with_explicit_limit(monkeypatch):
     page = await svc.list_tags(limit=2, offset=4)
     assert svc._last_params["limit"] == 2
     assert svc._last_params["offset"] == 4
+    # Sort pinned to id: Gamma's default order is arbitrary, and an unstable
+    # order across offset pages could silently skip or duplicate tags.
+    assert svc._last_params["order"] == "id"
+    assert svc._last_params["ascending"] is True
     assert page.returned == 2
     assert page.next_offset == 6  # full page -> more may exist
     await svc.aclose()

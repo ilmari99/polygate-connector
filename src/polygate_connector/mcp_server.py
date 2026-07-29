@@ -543,6 +543,13 @@ async def search(
     server-side); `events_status` filters e.g. 'active' or 'resolved'; a
     `next_page` field appears when more results exist. At the default
     `verbosity` rows form a markdown table.
+
+    Upstream matching requires every term, so a descriptive multi-word query
+    can return near-zero results while a short single-concept one ('GTA',
+    'Iran') recalls well; several narrow queries cover a topic better than one
+    long phrase. Rows follow upstream relevance order, not size - a large
+    event can rank past the requested page; `list_events(tag_id=...)` is the
+    exhaustive path through a category.
     """
     table = SEARCH_COLUMNS if verbosity == "minimal" else None
     return await _run_tool(

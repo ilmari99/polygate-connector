@@ -101,14 +101,16 @@ def test_clean_market_compact_keeps_resolution_and_fee_signals():
             umaResolutionStatus="disputed",
             umaResolutionStatuses='["proposed", "disputed"]',
             feesEnabled=True,
-            feeType="taker",
+            feeType="weather_fees",
+            feeSchedule={"rate": 0.05, "takerOnly": True},
         ),
         verbosity="compact",
     )
     assert out["umaResolutionStatus"] == "disputed"
     assert out["umaResolutionStatuses"] == ["proposed", "disputed"]  # decoded
     assert out["feesEnabled"] is True
-    assert out["feeType"] == "taker"
+    assert out["feeType"] == "weather_fees"
+    assert out["feeSchedule"] == {"rate": 0.05, "takerOnly": True}
 
 
 def test_clean_market_strips_stale_context_in_embedded_events():
