@@ -56,6 +56,54 @@ def test_mcp_initialize_round_trips():
         assert "polymarket-research" in resp.text
 
 
+def test_browser_get_on_mcp_shows_landing_page():
+    with _client() as client:
+        resp = client.get("/mcp", headers={"Accept": "text/html,application/xhtml+xml"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/html")
+        assert "Add custom" in resp.text
+        assert PUBLIC_HOST in resp.text  # shows the paste-able connector URL
+        root = client.get("/", headers={"Accept": "text/html"})
+        assert root.status_code == 200
+        assert "Polymarket Research MCP" in root.text
+
+
+async def test_sse_get_passes_through_to_transport():
+    # Exercised at the ASGI layer: a protocol GET (Accept: text/event-stream)
+    # must reach the wrapped app untouched, while a browser GET is answered
+    # by the middleware itself. (Through a real client the SSE GET would
+    # open a stream and block a sync test.)
+    inner_calls: list[str] = []
+
+    async def inner(scope, receive, send):
+        inner_calls.append(scope["path"])
+
+    sent: list[dict] = []
+
+    async def send(message):
+        sent.append(message)
+
+    mw = serve._BrowserLanding(inner, html="<html>landing</html>")
+    sse = {
+        "type": "http",
+        "method": "GET",
+        "path": "/mcp",
+        "headers": [(b"accept", b"text/event-stream")],
+    }
+    await mw(sse, None, send)
+    assert inner_calls == ["/mcp"]
+    assert sent == []  # nothing intercepted
+
+    browser = {**sse, "headers": [(b"accept", b"text/html")]}
+    await mw(browser, None, send)
+    assert inner_calls == ["/mcp"]  # inner app not called again
+    assert sent[0]["status"] == 200
+    # POSTs are never intercepted regardless of Accept.
+    post = {**sse, "method": "POST", "headers": [(b"accept", b"text/html")]}
+    await mw(post, None, send)
+    assert inner_calls == ["/mcp", "/mcp"]
+
+
 def test_wrong_host_header_is_rejected():
     app = serve.create_app(_settings())
     with TestClient(app, base_url="http://evil.example.com") as client:

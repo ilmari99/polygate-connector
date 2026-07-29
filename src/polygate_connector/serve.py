@@ -58,6 +58,95 @@ def _rate_limited(_request: Request, exc: RateLimitExceeded) -> Response:
     )
 
 
+def _landing_page(public_host: str) -> str:
+    """Human-readable page for a browser that opens the MCP endpoint URL.
+
+    Whoever clicks the connector link should learn the server is up and how
+    to use it - not a JSON-RPC "Not Acceptable" error that reads like an
+    outage.
+    """
+    url = f"https://{public_host}/mcp"
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polymarket Research MCP</title>
+<style>
+  body {{ font: 16px/1.6 system-ui, sans-serif; max-width: 40rem;
+         margin: 4rem auto; padding: 0 1rem; color: #1a1a1a; }}
+  code {{ background: #eee; padding: 0.15rem 0.4rem; border-radius: 4px; }}
+  .ok {{ color: #0a7d33; }}
+  @media (prefers-color-scheme: dark) {{
+    body {{ background: #111; color: #ddd; }}
+    code {{ background: #222; }}
+    .ok {{ color: #4cc575; }}
+    a {{ color: #7ab8ff; }}
+  }}
+</style>
+</head>
+<body>
+<h1>Polymarket Research MCP</h1>
+<p class="ok">&#10003; The server is up (version {__version__}).</p>
+<p>This URL is a <a href="https://modelcontextprotocol.io">Model Context
+Protocol</a> endpoint: it speaks JSON-RPC to AI clients, not HTML to
+browsers, which is why there is nothing more to see here.</p>
+<p>To use it in Claude: <b>Settings &rarr; Connectors &rarr; Add custom
+connector</b>, then paste</p>
+<p><code>{url}</code></p>
+<p>Fourteen read-only tools over Polymarket's public prediction-market data:
+search, markets, events, order books, price history, top holders, comments.
+No account or API key required.</p>
+<p><a href="https://github.com/ilmari99/polygate-connector">Source &amp; docs</a> &middot;
+<a href="https://github.com/ilmari99/polygate-connector/blob/main/docs/privacy-policy.md">Privacy policy</a> &middot;
+<a href="/healthz">Health check</a></p>
+</body>
+</html>
+"""
+
+
+class _BrowserLanding:
+    """Serve the landing page when a browser GETs the MCP endpoint (or ``/``).
+
+    An MCP client's GET always advertises ``Accept: text/event-stream`` -
+    that request opens the SSE channel - while a browser's never does, and
+    would otherwise receive a bare JSON-RPC "Not Acceptable" error. Protocol
+    traffic (every POST/DELETE, and any GET that accepts an event stream)
+    passes through untouched.
+    """
+
+    def __init__(self, app, html: str):
+        self.app = app
+        self.html = html.encode("utf-8")
+
+    async def __call__(self, scope, receive, send) -> None:
+        if (
+            scope.get("type") == "http"
+            and scope.get("method") in ("GET", "HEAD")
+            and scope.get("path", "").rstrip("/") in ("", "/mcp")
+        ):
+            accept = next(
+                (v.decode("latin-1") for k, v in scope.get("headers") or [] if k == b"accept"),
+                "",
+            )
+            if "text/event-stream" not in accept:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [
+                            (b"content-type", b"text/html; charset=utf-8"),
+                            (b"content-length", str(len(self.html)).encode()),
+                            (b"cache-control", b"no-store"),
+                        ],
+                    }
+                )
+                body = b"" if scope["method"] == "HEAD" else self.html
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the public-facing ASGI app around the MCP Streamable HTTP app."""
     settings = settings or get_settings()
@@ -94,6 +183,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_exception_handler(RateLimitExceeded, _rate_limited)
     app.add_middleware(SlowAPIASGIMiddleware)
+    # Outermost (added last): a static info page for humans, served before
+    # rate limiting so browser clicks never consume protocol quota.
+    app.add_middleware(_BrowserLanding, html=_landing_page(public_host))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
